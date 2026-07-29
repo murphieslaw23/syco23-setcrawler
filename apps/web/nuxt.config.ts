@@ -1,37 +1,27 @@
-const isVercelRuntime = process.env.VERCEL === '1'
+const isVercelBuild = process.env.VERCEL === '1' || Boolean(process.env.VERCEL_ENV)
 
-const productionRuntime = {
+const approvedProductionRuntime = {
   apiBase: 'https://api.syco23.org',
   runtimeMode: 'production',
   localRole: 'viewer',
   supabaseUrl: 'https://smoevguhtsclfcmjwwhq.supabase.co',
-  supabasePublishableKey: 'sb_publishable_hZXd8eJ4dGRwfHSW8u0Xog_JFhFD7s0'
+  supabaseAnonKey: 'sb_publishable_hZXd8eJ4dGRwfHSW8u0Xog_JFhFD7s0'
 }
-
-const localRuntime = {
-  apiBase: process.env.NUXT_PUBLIC_API_BASE || 'http://localhost:8000',
-  runtimeMode: process.env.NUXT_PUBLIC_RUNTIME_MODE || 'local',
-  localRole: process.env.NUXT_PUBLIC_LOCAL_ROLE || 'admin',
-  supabaseUrl: process.env.NUXT_PUBLIC_SUPABASE_URL || '',
-  supabasePublishableKey: process.env.NUXT_PUBLIC_SUPABASE_ANON_KEY || ''
-}
-
-// Vercel previously retained stale project-level variables for a different
-// Supabase project and localhost API. Keep the approved public production
-// coordinates authoritative until those platform variables are removed.
-const runtime = isVercelRuntime ? productionRuntime : localRuntime
 
 export default defineNuxtConfig({
   compatibilityDate: '2026-07-28',
   devtools: { enabled: false },
   css: ['~/assets/app.css'],
+  appConfig: {
+    sycoRuntime: isVercelBuild ? approvedProductionRuntime : null
+  },
   runtimeConfig: {
     public: {
-      apiBase: runtime.apiBase,
-      runtimeMode: runtime.runtimeMode,
-      localRole: runtime.localRole,
-      supabaseUrl: runtime.supabaseUrl,
-      supabaseAnonKey: runtime.supabasePublishableKey
+      apiBase: process.env.NUXT_PUBLIC_API_BASE || 'http://localhost:8000',
+      runtimeMode: process.env.NUXT_PUBLIC_RUNTIME_MODE || 'local',
+      localRole: process.env.NUXT_PUBLIC_LOCAL_ROLE || 'admin',
+      supabaseUrl: process.env.NUXT_PUBLIC_SUPABASE_URL || '',
+      supabaseAnonKey: process.env.NUXT_PUBLIC_SUPABASE_ANON_KEY || ''
     }
   },
   app: {
