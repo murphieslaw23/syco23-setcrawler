@@ -1,0 +1,170 @@
+name: syco23-setcrawler-production
+
+x-backend-environment: &backend-environment
+  ENVIRONMENT: production
+  REPOSITORY_MODE: postgres
+  AUTH_MODE: supabase
+  DATABASE_URL: "${DATABASE_URL:?DATABASE_URL is required}"
+  SUPABASE_URL: "${SUPABASE_URL:?SUPABASE_URL is required}"
+  SUPABASE_ANON_KEY: "${SUPABASE_ANON_KEY:?SUPABASE_ANON_KEY is required}"
+  SUPABASE_JWT_AUDIENCE: "${SUPABASE_JWT_AUDIENCE:-authenticated}"
+  REDIS_URL: redis://redis:6379/0
+  CORS_ORIGINS: "${CORS_ORIGINS:?CORS_ORIGINS is required}"
+  PROVIDER_MODE: "${PROVIDER_MODE:-fixture}"
+  YOUTUBE_API_KEY: "${YOUTUBE_API_KEY:-}"
+  SCRAPER_USER_AGENT: "${SCRAPER_USER_AGENT:-syco23-setcrawler/0.2 (+contact: operations@example.com)}"
+  SCRAPER_REQUEST_DELAY_MS: "${SCRAPER_REQUEST_DELAY_MS:-5000}"
+  FTM_SCRAPER_ENABLED: "${FTM_SCRAPER_ENABLED:-false}"
+  FTM_MAX_PAGES_PER_RUN: "${FTM_MAX_PAGES_PER_RUN:-25}"
+  PROVIDER_REQUEST_TIMEOUT_SECONDS: "${PROVIDER_REQUEST_TIMEOUT_SECONDS:-20}"
+  PROVIDER_OUTPUT_LIMIT_BYTES: "${PROVIDER_OUTPUT_LIMIT_BYTES:-1048576}"
+  YT_DLP_BIN: "${YT_DLP_BIN:-yt-dlp}"
+  JOB_CLAIM_TTL_SECONDS: "${JOB_CLAIM_TTL_SECONDS:-300}"
+  JOB_REDRIVE_INTERVAL_SECONDS: "${JOB_REDRIVE_INTERVAL_SECONDS:-60}"
+  JOB_REDRIVE_BATCH_SIZE: "${JOB_REDRIVE_BATCH_SIZE:-100}"
+
+x-worker-base: &worker-base
+  build:
+    context: .
+    dockerfile: docker/worker.Dockerfile
+  restart: unless-stopped
+  environment:
+    <<: *backend-environment
+  read_only: true
+  tmpfs:
+    - /tmp:size=64m,noexec,nosuid
+  depends_on:
+    redis:
+      condition: service_healthy
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *backend-environment
+      API_HOST: 0.0.0.0
+      API_PORT: "8000"
+    expose:
+      - "8000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+    ports: []
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test:
+        - CMD
+        - redis-cli
+        - ping
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  worker-youtube:
+    <<: *worker-base
+    command:
+      - celery
+      - -A
+      - app.workers.celery_app:celery_app
+      - worker
+      - -Q
+      - youtube
+      - --concurrency=1
+      - --loglevel=INFO
+
+  worker-soundcloud:
+    <<: *worker-base
+    command:
+      - celery
+      - -A
+      - app.workers.celery_app:celery_app
+      - worker
+      - -Q
+      - soundcloud
+      - --concurrency=1
+      - --loglevel=INFO
+    cpus: 1.0
+    mem_limit: 512m
+
+  worker-ftm:
+    <<: *worker-base
+    command:
+      - celery
+      - -A
+      - app.workers.celery_app:celery_app
+      - worker
+      - -Q
+      - ftm
+      - --concurrency=1
+      - --loglevel=INFO
+
+  worker-process:
+    <<: *worker-base
+    command:
+      - celery
+      - -A
+      - app.workers.celery_app:celery_app
+      - worker
+      - -Q
+      - process
+      - --concurrency=2
+      - --loglevel=INFO
+
+  worker-beat:
+    <<: *worker-base
+    command:
+      - celery
+      - -A
+      - app.workers.celery_app:celery_app
+      - beat
+      - --loglevel=INFO
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    environment:
+      API_DOMAIN: "${API_DOMAIN:?API_DOMAIN is required}"
+      ACME_EMAIL: "${ACME_EMAIL:?ACME_EMAIL is required}"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  redis_data:
+  caddy_data:
+  caddy_config:
