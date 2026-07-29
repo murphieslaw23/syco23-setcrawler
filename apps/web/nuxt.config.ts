@@ -1,11 +1,25 @@
 const isVercelRuntime = process.env.VERCEL === '1'
 
-const vercelDefaults = {
+const productionRuntime = {
   apiBase: 'https://api.syco23.org',
   runtimeMode: 'production',
+  localRole: 'viewer',
   supabaseUrl: 'https://smoevguhtsclfcmjwwhq.supabase.co',
   supabasePublishableKey: 'sb_publishable_hZXd8eJ4dGRwfHSW8u0Xog_JFhFD7s0'
 }
+
+const localRuntime = {
+  apiBase: process.env.NUXT_PUBLIC_API_BASE || 'http://localhost:8000',
+  runtimeMode: process.env.NUXT_PUBLIC_RUNTIME_MODE || 'local',
+  localRole: process.env.NUXT_PUBLIC_LOCAL_ROLE || 'admin',
+  supabaseUrl: process.env.NUXT_PUBLIC_SUPABASE_URL || '',
+  supabasePublishableKey: process.env.NUXT_PUBLIC_SUPABASE_ANON_KEY || ''
+}
+
+// Vercel previously retained stale project-level variables for a different
+// Supabase project and localhost API. Keep the approved public production
+// coordinates authoritative until those platform variables are removed.
+const runtime = isVercelRuntime ? productionRuntime : localRuntime
 
 export default defineNuxtConfig({
   compatibilityDate: '2026-07-28',
@@ -13,19 +27,11 @@ export default defineNuxtConfig({
   css: ['~/assets/app.css'],
   runtimeConfig: {
     public: {
-      apiBase:
-        process.env.NUXT_PUBLIC_API_BASE ||
-        (isVercelRuntime ? vercelDefaults.apiBase : 'http://localhost:8000'),
-      runtimeMode:
-        process.env.NUXT_PUBLIC_RUNTIME_MODE ||
-        (isVercelRuntime ? vercelDefaults.runtimeMode : 'local'),
-      localRole: process.env.NUXT_PUBLIC_LOCAL_ROLE || 'admin',
-      supabaseUrl:
-        process.env.NUXT_PUBLIC_SUPABASE_URL ||
-        (isVercelRuntime ? vercelDefaults.supabaseUrl : ''),
-      supabaseAnonKey:
-        process.env.NUXT_PUBLIC_SUPABASE_ANON_KEY ||
-        (isVercelRuntime ? vercelDefaults.supabasePublishableKey : '')
+      apiBase: runtime.apiBase,
+      runtimeMode: runtime.runtimeMode,
+      localRole: runtime.localRole,
+      supabaseUrl: runtime.supabaseUrl,
+      supabaseAnonKey: runtime.supabasePublishableKey
     }
   },
   app: {
