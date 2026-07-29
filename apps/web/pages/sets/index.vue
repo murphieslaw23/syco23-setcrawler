@@ -4,13 +4,13 @@ import type { SetPage } from '~/types'
 import { fixtureValue } from '~/utils/runtime'
 
 const route = useRoute()
-const config = useRuntimeConfig()
+const runtime = useSycoRuntime()
 const { get } = useApi()
 const { ready } = useAuth()
 const query = computed(() => String(route.query.search || ''))
 const fixturePage: SetPage = { items: demoSets, total: demoSets.length, limit: 50, offset: 0 }
 const emptyPage: SetPage = { items: [], total: 0, limit: 50, offset: 0 }
-const { data: page, error, execute: loadSets } = await useAsyncData<SetPage>('all-sets', () => get('/sets', fixturePage), { server: false, immediate: false, default: () => fixtureValue(config.public.runtimeMode as string, fixturePage, emptyPage) })
+const { data: page, error, execute: loadSets } = await useAsyncData<SetPage>('all-sets', () => get('/sets', fixturePage), { server: false, immediate: false, default: () => fixtureValue(runtime.runtimeMode, fixturePage, emptyPage) })
 useOperationalLoad(ready, loadSets)
 const visible = computed(() => {
   const needle = query.value.toLowerCase()
