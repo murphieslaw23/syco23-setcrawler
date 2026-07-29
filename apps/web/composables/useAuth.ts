@@ -2,6 +2,7 @@ import type { Session, SupabaseClient } from '@supabase/supabase-js'
 
 import { computed } from 'vue'
 
+import { useSycoRuntime } from '~/composables/useSycoRuntime'
 import { capabilities, headersForRuntime, roleFromIdentity, type ApiIdentity, type AppRole } from '~/utils/auth'
 
 interface AuthUser {
