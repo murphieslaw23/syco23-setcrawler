@@ -23,6 +23,7 @@ describe('useAuth', () => {
       return stores.get(key)
     })
     vi.stubGlobal('useRuntimeConfig', () => ({ public: { runtimeMode: 'production', localRole: 'admin', apiBase: 'http://api.test' } }))
+    vi.stubGlobal('useAppConfig', () => ({ sycoRuntime: null }))
     vi.stubGlobal('$fetch', fetchMock)
     vi.stubGlobal('useNuxtApp', () => ({
       $supabase: {
