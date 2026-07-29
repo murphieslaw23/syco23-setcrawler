@@ -26,6 +26,26 @@ exactly one Celery beat redriver
 Do not deploy the local `db` or `web` services from `docker-compose.yml` on
 the production host. Use `docker-compose.production.yml`.
 
+## Current production target
+
+The following values are public deployment coordinates, not secrets:
+
+```dotenv
+API_DOMAIN=api.syco23.org
+ACME_EMAIL=emilach82@gmail.com
+CORS_ORIGINS=https://syco23-setcrawler.vercel.app
+SUPABASE_URL=https://smoevguhtsclfcmjwwhq.supabase.co
+SUPABASE_JWT_AUDIENCE=authenticated
+```
+
+- Supabase project: `syco23-setcrawler` (`smoevguhtsclfcmjwwhq`), `eu-west-1`
+- Frontend: `https://syco23-setcrawler.vercel.app`
+- API host: IONOS VPS at `87.106.219.4`
+
+Keep `SUPABASE_ANON_KEY`, the database password, the complete `DATABASE_URL`,
+and provider credentials in their platform or host secret stores. Do not add
+them to this runbook.
+
 ## Database decision
 
 Do not apply the SETCRAWLER migrations to the existing
