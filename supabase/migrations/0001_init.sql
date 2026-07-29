@@ -1,10 +1,17 @@
 create extension if not exists pgcrypto;
 
--- Plain Postgres compatibility for local Compose; Supabase already owns this schema/table.
-create schema if not exists auth;
-create table if not exists auth.users (
-  id uuid primary key default gen_random_uuid()
-);
+-- Plain Postgres compatibility for local Compose. Supabase owns auth.users and
+-- intentionally denies application migrations DDL access to the auth schema.
+do $$
+begin
+  if to_regclass('auth.users') is null then
+    create schema if not exists auth;
+    create table auth.users (
+      id uuid primary key default gen_random_uuid()
+    );
+  end if;
+end
+$$;
 
 create table images (
   id uuid primary key default gen_random_uuid(),
