@@ -121,6 +121,31 @@ does **not** apply `0002_rls.sql`, because plain PostgreSQL does not provide
 Supabase's `auth.uid()` runtime context. Use a Supabase project for the RLS
 migration and real JWT operation.
 
+### Persistent production host
+
+The production backend is intentionally separate from the Vercel Nuxt
+deployment. Use the production Compose file to run FastAPI, AOF-backed Redis,
+the four provider/process workers, exactly one Celery beat scheduler, and a
+Caddy HTTPS edge:
+
+```bash
+cp .env.production.example .env.production
+docker compose \
+  --env-file .env.production \
+  -f docker-compose.production.yml \
+  config --quiet
+docker compose \
+  --env-file .env.production \
+  -f docker-compose.production.yml \
+  up -d --build
+```
+
+The existing `event-live-set-database` Supabase project contains an
+incompatible flyer/OCR schema and must not receive the SETCRAWLER migrations.
+Use a dedicated Supabase project. See
+[`docs/deployment-production.md`](docs/deployment-production.md) for database,
+DNS/TLS, Vercel, recovery-drill, and non-destructive rollback instructions.
+
 ## Supabase production setup
 
 1. Create the project and keep its database URL in `DATABASE_URL` for API and

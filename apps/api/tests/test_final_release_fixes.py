@@ -715,6 +715,92 @@ def test_all_search_profile_management_policies_are_admin_only() -> None:
         assert "has_role('editor')" not in policy
 
 
+def test_data_api_security_migration_covers_every_public_table() -> None:
+    """Every exposed table needs explicit grants and RLS on new Supabase projects."""
+    migration = (
+        ROOT / "supabase/migrations/20260729151000_data_api_security.sql"
+    ).read_text().casefold()
+
+    for table in (
+        "sets",
+        "artists",
+        "events",
+        "crews",
+        "images",
+        "set_artists",
+        "set_events",
+        "set_crews",
+        "set_images",
+        "field_candidates",
+        "import_log",
+        "search_profiles",
+        "user_roles",
+        "heuristic_config",
+        "import_jobs",
+        "provider_cursors",
+    ):
+        assert f"alter table public.{table} enable row level security" in migration
+        assert f"revoke all on table public.{table}" in migration
+
+    assert "grant select on table public.sets to anon" in migration
+    assert "grant select, insert, update, delete" in migration
+    assert "to authenticated" in migration
+    assert "to service_role" in migration
+    assert 'create policy "public read published set artists"' in migration
+    assert 'create policy "editors manage set artists"' in migration
+    assert 'create policy "editors read import log"' in migration
+
+
+def test_init_only_creates_auth_users_for_plain_postgres() -> None:
+    """Hosted Supabase owns auth.users and rejects application DDL in that schema."""
+    migration = (ROOT / "supabase/migrations/0001_init.sql").read_text().casefold()
+
+    assert "if to_regclass('auth.users') is null then" in migration
+    assert migration.index("if to_regclass('auth.users') is null then") < migration.index(
+        "create table auth.users"
+    )
+
+
+def test_advisor_fix_migration_locks_function_and_indexes_foreign_keys() -> None:
+    """Production migrations should clear actionable security and FK advisor findings."""
+    migration = (
+        ROOT / "supabase/migrations/20260729152500_advisor_fixes.sql"
+    ).read_text().casefold()
+
+    assert "alter function public.set_updated_at() set search_path = ''" in migration
+    for index in (
+        "artists_image_id_idx",
+        "crews_image_id_idx",
+        "events_flyer_image_id_idx",
+        "import_jobs_result_set_id_idx",
+        "import_log_set_id_idx",
+        "set_artists_artist_id_idx",
+        "set_crews_crew_id_idx",
+        "set_events_event_id_idx",
+        "set_images_image_id_idx",
+    ):
+        assert f"create index {index}" in migration
+
+    assert 'drop policy if exists "admins all sets"' in migration
+    assert 'create policy "admins insert sets"' in migration
+    assert 'create policy "admins delete sets"' in migration
+
+
+def test_storage_bucket_migration_creates_private_image_buckets() -> None:
+    """Provider artwork must stay private and reject oversized/non-image uploads."""
+    migration = (
+        ROOT / "supabase/migrations/20260729154000_storage_buckets.sql"
+    ).read_text().casefold()
+    compact = " ".join(migration.split())
+
+    for bucket in ("flyers", "thumbnails", "artist-images"):
+        assert f"( '{bucket}', '{bucket}', false," in compact
+    assert "20971520" in migration
+    assert "image/jpeg" in migration
+    assert "image/png" in migration
+    assert "image/webp" in migration
+
+
 def test_invalid_optional_date_is_ignored_during_candidate_extraction() -> None:
     """Malformed optional provider evidence must not abort a valid import."""
     candidates = extract_field_candidates(

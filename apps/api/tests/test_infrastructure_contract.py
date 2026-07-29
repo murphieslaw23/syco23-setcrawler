@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -131,3 +133,82 @@ def test_compose_persists_redis_and_runs_database_redriver() -> None:
     assert "worker-beat:" in compose
     assert "celery -A app.workers.celery_app:celery_app beat" in compose
     assert "\n  redis_data:" in compose
+
+
+def test_production_compose_keeps_state_and_secrets_on_the_backend_host() -> None:
+    compose_path = ROOT / "docker-compose.production.yml"
+    compose = yaml.safe_load(compose_path.read_text())
+    services = compose["services"]
+
+    assert set(services) == {
+        "api",
+        "redis",
+        "worker-youtube",
+        "worker-soundcloud",
+        "worker-ftm",
+        "worker-process",
+        "worker-beat",
+        "caddy",
+    }
+    assert "db" not in services
+    assert "web" not in services
+    assert services["redis"]["ports"] == []
+    assert "redis_data:/data" in services["redis"]["volumes"]
+    assert services["redis"]["command"] == [
+        "redis-server",
+        "--appendonly",
+        "yes",
+        "--appendfsync",
+        "everysec",
+    ]
+    assert services["api"]["expose"] == ["8000"]
+    assert "ports" not in services["api"]
+    assert services["caddy"]["ports"] == ["80:80", "443:443", "443:443/udp"]
+    assert services["worker-beat"]["command"] == [
+        "celery",
+        "-A",
+        "app.workers.celery_app:celery_app",
+        "beat",
+        "--schedule=/tmp/celerybeat-schedule",
+        "--loglevel=INFO",
+    ]
+    assert "/tmp:size=64m,noexec,nosuid" in services["worker-beat"]["tmpfs"]
+    assert sum(" beat " in " ".join(service.get("command", [])) for service in services.values()) == 1
+
+    backend_services = [
+        "api",
+        "worker-youtube",
+        "worker-soundcloud",
+        "worker-ftm",
+        "worker-process",
+        "worker-beat",
+    ]
+    for service_name in backend_services:
+        environment = services[service_name]["environment"]
+        assert environment["ENVIRONMENT"] == "production"
+        assert environment["REPOSITORY_MODE"] == "postgres"
+        assert environment["AUTH_MODE"] == "supabase"
+        assert environment["DATABASE_URL"] == "${DATABASE_URL:?DATABASE_URL is required}"
+        assert environment["SUPABASE_URL"] == "${SUPABASE_URL:?SUPABASE_URL is required}"
+        assert (
+            environment["SUPABASE_ANON_KEY"]
+            == "${SUPABASE_ANON_KEY:?SUPABASE_ANON_KEY is required}"
+        )
+
+    assert "SUPABASE_SERVICE_ROLE_KEY" not in compose_path.read_text()
+
+
+def test_production_tls_proxy_targets_only_the_internal_api() -> None:
+    caddyfile = (ROOT / "docker" / "Caddyfile").read_text()
+
+    assert "{$API_DOMAIN}" in caddyfile
+    assert "reverse_proxy api:8000" in caddyfile
+    assert "/health" in caddyfile
+
+
+def test_deploy_script_rejects_a_restarting_beat_scheduler() -> None:
+    deploy_script = (ROOT / "scripts" / "deploy-production.sh").read_text()
+
+    assert "BEAT_STABILITY_SECONDS" in deploy_script
+    assert "{{.RestartCount}}" in deploy_script
+    assert 'fail "worker-beat restarted during the stability window"' in deploy_script
