@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { demoSets } from '~/data/demo'
 import { fixtureValue } from '~/utils/runtime'
-const config = useRuntimeConfig()
-const events = fixtureValue(config.public.runtimeMode as string, demoSets, []).filter((set) => set.event_name).map((set) => ({
+const runtime = useSycoRuntime()
+const events = fixtureValue(runtime.runtimeMode, demoSets, []).filter((set) => set.event_name).map((set) => ({
   id: set.id,
   name: set.event_name,
   city: set.city,
