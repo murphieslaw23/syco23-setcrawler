@@ -7,14 +7,14 @@ import { fixtureValue } from '~/utils/runtime'
 
 const route = useRoute()
 const router = useRouter()
-const config = useRuntimeConfig()
+const runtime = useSycoRuntime()
 const { get, send } = useApi()
 const { ready, role, canEdit, isAdmin } = useAuth()
 const fixtureRecord = demoSets.find((set) => set.id === route.params.id) || demoSets[0]!
 const { data: record, error, status, execute: loadRecord } = await useAsyncData<SetRecord | null>(`set-${route.params.id}`, () => get<SetRecord>(`/sets/${route.params.id}`, fixtureRecord), {
   server: false,
   immediate: false,
-  default: () => fixtureValue<SetRecord | null>(config.public.runtimeMode as string, fixtureRecord, null)
+  default: () => fixtureValue<SetRecord | null>(runtime.runtimeMode, fixtureRecord, null)
 })
 useOperationalLoad(ready, loadRecord)
 const busyCandidate = ref<string | null>(null)
