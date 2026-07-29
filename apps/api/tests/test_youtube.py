@@ -773,6 +773,15 @@ def test_profile_worker_retries_temporary_failures_on_shared_schedule(
     )
 
     for retries, delay in ((0, 5), (1, 30), (2, 120)):
+        if retries:
+            current = repository.get_job(job.id)
+            repository.jobs[job.id] = current.model_copy(
+                update={
+                    "next_retry_at": (
+                        datetime.now(UTC) - timedelta(seconds=1)
+                    ),
+                }
+            )
         with _task_request(
             youtube_poller.run_youtube_profile,
             retries,
@@ -785,6 +794,12 @@ def test_profile_worker_retries_temporary_failures_on_shared_schedule(
         assert current.status is JobStatus.retry
         assert current.next_retry_at is not None
 
+    current = repository.get_job(job.id)
+    repository.jobs[job.id] = current.model_copy(
+        update={
+            "next_retry_at": datetime.now(UTC) - timedelta(seconds=1),
+        }
+    )
     with _task_request(youtube_poller.run_youtube_profile, 3):
         with pytest.raises(
             ProviderTemporaryError,

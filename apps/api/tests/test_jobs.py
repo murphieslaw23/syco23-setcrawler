@@ -665,6 +665,15 @@ def test_retryable_worker_failures_persist_backoff_and_dead_letter(
         (1, 30, 2),
         (2, 120, 3),
     ):
+        if retries:
+            current = repository.get_job(job.id)
+            repository.jobs[job.id] = current.model_copy(
+                update={
+                    "next_retry_at": (
+                        datetime.now(UTC) - timedelta(seconds=1)
+                    ),
+                }
+            )
         with task_request(
             normalize_worker.process_raw_payload,
             retries,
@@ -683,6 +692,12 @@ def test_retryable_worker_failures_persist_backoff_and_dead_letter(
         assert current.error_message == "database unavailable"
         assert current.next_retry_at is not None
 
+    current = repository.get_job(job.id)
+    repository.jobs[job.id] = current.model_copy(
+        update={
+            "next_retry_at": datetime.now(UTC) - timedelta(seconds=1),
+        }
+    )
     with task_request(normalize_worker.process_raw_payload, 3):
         with pytest.raises(RuntimeError, match="database unavailable"):
             normalize_worker.process_raw_payload.run(

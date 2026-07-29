@@ -17,6 +17,12 @@ celery_app.conf.update(
     task_reject_on_worker_lost=True,
     task_acks_on_failure_or_timeout=False,
     worker_prefetch_multiplier=1,
+    beat_schedule={
+        "redrive-durable-import-jobs": {
+            "task": "app.workers.normalize_worker.redrive_import_jobs",
+            "schedule": settings.job_redrive_interval_seconds,
+        },
+    },
     task_routes={
         "app.workers.youtube_poller.*": {"queue": "youtube"},
         "app.workers.soundcloud_importer.*": {"queue": "soundcloud"},

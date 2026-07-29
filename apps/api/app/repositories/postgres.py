@@ -232,7 +232,14 @@ class PostgresRepository:
                         updated_at = now()
                     where id = %s
                       and (
-                        status in ('queued', 'retry')
+                        status = 'queued'
+                        or (
+                            status = 'retry'
+                            and (
+                                next_retry_at is null
+                                or next_retry_at <= now()
+                            )
+                        )
                         or (
                             status = 'processing'
                             and started_at is not null
@@ -246,6 +253,44 @@ class PostgresRepository:
                     (job_id, claim_ttl_seconds),
                 ).fetchone()
         return _job(row) if row else None
+
+    def list_recoverable_jobs(
+        self,
+        *,
+        claim_ttl_seconds: int,
+        limit: int,
+    ) -> list[ImportJob]:
+        if claim_ttl_seconds < 1:
+            raise ValueError("claim_ttl_seconds must be positive")
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        with self.pool.connection() as connection:
+            with connection.cursor() as cursor:
+                rows = cursor.execute(
+                    """
+                    select *
+                    from import_jobs
+                    where status = 'queued'
+                       or (
+                            status = 'retry'
+                            and (
+                                next_retry_at is null
+                                or next_retry_at <= now()
+                            )
+                       )
+                       or (
+                            status = 'processing'
+                            and started_at is not null
+                            and started_at
+                                < now()
+                                  - (%s * interval '1 second')
+                       )
+                    order by created_at, id
+                    limit %s
+                    """,
+                    (claim_ttl_seconds, limit),
+                ).fetchall()
+        return [_job(row) for row in rows]
 
     def list_jobs(
         self,

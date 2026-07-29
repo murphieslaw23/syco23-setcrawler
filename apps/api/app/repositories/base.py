@@ -37,6 +37,13 @@ class Repository(Protocol):
         claim_ttl_seconds: int = 300,
     ) -> ImportJob | None: ...
 
+    def list_recoverable_jobs(
+        self,
+        *,
+        claim_ttl_seconds: int,
+        limit: int,
+    ) -> list[ImportJob]: ...
+
     def list_jobs(
         self, *, source: SetSource | None, status: JobStatus | None, limit: int, offset: int
     ) -> ImportJobPage: ...
