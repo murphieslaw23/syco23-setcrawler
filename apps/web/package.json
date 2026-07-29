@@ -1,0 +1,29 @@
+{
+  "name": "@syco23/setcrawler-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "nuxt dev --host 0.0.0.0",
+    "postinstall": "nuxt prepare",
+    "build": "nuxt build",
+    "preview": "nuxt preview",
+    "test": "vitest run",
+    "typecheck": "nuxt typecheck",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.111.0",
+    "nuxt": "3.21.10",
+    "vue": "3.5.40",
+    "vue-router": "4.6.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1",
+    "@vitejs/plugin-vue": "6.0.8",
+    "@vue/test-utils": "2.4.6",
+    "happy-dom": "20.0.11",
+    "typescript": "^5.9.3",
+    "vitest": "4.1.10",
+    "vue-tsc": "^3.3.8"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "id": "1876543210",
+  "webpage_url": "https://soundcloud.com/syco23/ritual-session",
+  "title": "SYCO23 LIVESET @ RITUAL FLOOR",
+  "description": "Recorded at Hangar 23, Berlin.",
+  "duration": 5400.25,
+  "timestamp": 1735689600,
+  "thumbnail": "https://i1.sndcdn.com/artworks-ritual-t500x500.jpg",
+  "uploader": "SYCO23",
+  "extractor": "soundcloud",
+  "extractor_key": "Soundcloud"
+}

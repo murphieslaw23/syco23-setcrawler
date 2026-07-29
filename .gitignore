@@ -1,0 +1,13 @@
+.env
+.venv/
+.npm-cache/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+node_modules/
+.nuxt/
+.output/
+.DS_Store
+coverage/
+playwright-report/
+test-results/

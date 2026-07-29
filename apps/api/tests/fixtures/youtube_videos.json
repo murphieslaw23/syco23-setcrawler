@@ -1,0 +1,117 @@
+{
+  "kind": "youtube#videoListResponse",
+  "etag": "videos-etag",
+  "items": [
+    {
+      "kind": "youtube#video",
+      "etag": "video-etag-alpha",
+      "id": "video-alpha",
+      "snippet": {
+        "publishedAt": "2026-07-10T18:30:00Z",
+        "channelId": "channel-alpha",
+        "title": "Alpha liveset",
+        "description": "Alpha description",
+        "thumbnails": {
+          "default": {
+            "url": "https://i.ytimg.com/vi/video-alpha/default.jpg",
+            "width": 120,
+            "height": 90
+          },
+          "medium": {
+            "url": "https://i.ytimg.com/vi/video-alpha/mqdefault.jpg",
+            "width": 320,
+            "height": 180
+          },
+          "high": {
+            "url": "https://i.ytimg.com/vi/video-alpha/hqdefault.jpg",
+            "width": 480,
+            "height": 360
+          },
+          "standard": {
+            "url": "https://i.ytimg.com/vi/video-alpha/sddefault.jpg",
+            "width": 640,
+            "height": 480
+          },
+          "maxres": {
+            "url": "https://i.ytimg.com/vi/video-alpha/maxres.jpg",
+            "width": 1280,
+            "height": 720
+          }
+        },
+        "channelTitle": "SYCO23",
+        "categoryId": "10",
+        "liveBroadcastContent": "none",
+        "localized": {
+          "title": "Alpha liveset",
+          "description": "Alpha description"
+        }
+      },
+      "contentDetails": {
+        "duration": "PT1H24M22S",
+        "dimension": "2d",
+        "definition": "hd",
+        "caption": "false",
+        "licensedContent": false,
+        "projection": "rectangular"
+      },
+      "status": {
+        "uploadStatus": "processed",
+        "privacyStatus": "public",
+        "license": "youtube",
+        "embeddable": true,
+        "publicStatsViewable": true,
+        "madeForKids": false
+      }
+    },
+    {
+      "kind": "youtube#video",
+      "etag": "video-etag-beta",
+      "id": "video-beta",
+      "snippet": {
+        "publishedAt": "2026-07-11T18:30:00Z",
+        "channelId": "channel-beta",
+        "title": "Beta liveset",
+        "description": "Beta description",
+        "thumbnails": {
+          "default": {
+            "url": "https://i.ytimg.com/vi/video-beta/default.jpg",
+            "width": 120,
+            "height": 90
+          },
+          "high": {
+            "url": "https://i.ytimg.com/vi/video-beta/hqdefault.jpg",
+            "width": 480,
+            "height": 360
+          }
+        },
+        "channelTitle": "SYCO23",
+        "categoryId": "10",
+        "liveBroadcastContent": "none",
+        "localized": {
+          "title": "Beta liveset",
+          "description": "Beta description"
+        }
+      },
+      "contentDetails": {
+        "duration": "PT2H3M4S",
+        "dimension": "2d",
+        "definition": "hd",
+        "caption": "false",
+        "licensedContent": false,
+        "projection": "rectangular"
+      },
+      "status": {
+        "uploadStatus": "processed",
+        "privacyStatus": "public",
+        "license": "youtube",
+        "embeddable": true,
+        "publicStatsViewable": true,
+        "madeForKids": false
+      }
+    }
+  ],
+  "pageInfo": {
+    "totalResults": 2,
+    "resultsPerPage": 2
+  }
+}

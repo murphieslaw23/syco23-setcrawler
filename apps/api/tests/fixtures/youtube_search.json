@@ -1,0 +1,60 @@
+{
+  "kind": "youtube#searchListResponse",
+  "etag": "search-etag",
+  "nextPageToken": "NEXT_PAGE",
+  "regionCode": "DE",
+  "pageInfo": {
+    "totalResults": 2,
+    "resultsPerPage": 2
+  },
+  "items": [
+    {
+      "kind": "youtube#searchResult",
+      "etag": "search-item-1",
+      "id": {
+        "kind": "youtube#video",
+        "videoId": "video-alpha"
+      },
+      "snippet": {
+        "publishedAt": "2026-07-10T18:30:00Z",
+        "channelId": "channel-alpha",
+        "title": "Alpha liveset",
+        "description": "Alpha description",
+        "thumbnails": {
+          "default": {
+            "url": "https://i.ytimg.com/vi/video-alpha/default.jpg",
+            "width": 120,
+            "height": 90
+          }
+        },
+        "channelTitle": "SYCO23",
+        "liveBroadcastContent": "none",
+        "publishTime": "2026-07-10T18:30:00Z"
+      }
+    },
+    {
+      "kind": "youtube#searchResult",
+      "etag": "search-item-2",
+      "id": {
+        "kind": "youtube#video",
+        "videoId": "video-beta"
+      },
+      "snippet": {
+        "publishedAt": "2026-07-11T18:30:00Z",
+        "channelId": "channel-beta",
+        "title": "Beta liveset",
+        "description": "Beta description",
+        "thumbnails": {
+          "default": {
+            "url": "https://i.ytimg.com/vi/video-beta/default.jpg",
+            "width": 120,
+            "height": 90
+          }
+        },
+        "channelTitle": "SYCO23",
+        "liveBroadcastContent": "none",
+        "publishTime": "2026-07-11T18:30:00Z"
+      }
+    }
+  ]
+}
