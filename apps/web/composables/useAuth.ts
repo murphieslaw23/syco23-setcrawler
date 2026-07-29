@@ -2,6 +2,7 @@ import type { Session, SupabaseClient } from '@supabase/supabase-js'
 
 import { computed } from 'vue'
 
+import { useSycoRuntime } from '~/composables/useSycoRuntime'
 import { capabilities, headersForRuntime, roleFromIdentity, type ApiIdentity, type AppRole } from '~/utils/auth'
 
 interface AuthUser {
@@ -22,10 +23,10 @@ let inflightToken: string | null = null
 let inflightIdentity: Promise<void> | undefined
 
 export function useAuth() {
-  const config = useRuntimeConfig()
+  const runtime = useSycoRuntime()
   const clientRuntime = import.meta.client || typeof window !== 'undefined'
-  const runtimeMode = config.public.runtimeMode as string
-  const localRole = ((config.public.localRole as AppRole) || 'viewer')
+  const runtimeMode = runtime.runtimeMode
+  const localRole = ((runtime.localRole as AppRole) || 'viewer')
   const app = useNuxtApp()
   const supabase = app.$supabase as SupabaseClient | null | undefined
   const state = useState<AuthState>('syco-auth', () => ({
@@ -56,7 +57,7 @@ export function useAuth() {
   async function resolveProductionIdentity(session: Session, requestGeneration: number) {
     const token = session.access_token
     const identity = await $fetch<ApiIdentity>('/auth/me', {
-      baseURL: config.public.apiBase as string,
+      baseURL: runtime.apiBase,
       headers: { Authorization: `Bearer ${token}` },
       timeout: 5_000
     })

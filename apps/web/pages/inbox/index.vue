@@ -3,7 +3,7 @@ import { demoSets } from '~/data/demo'
 import type { SetPage, SetSource } from '~/types'
 import { fixtureValue } from '~/utils/runtime'
 
-const config = useRuntimeConfig()
+const runtime = useSycoRuntime()
 const { get } = useApi()
 const { ready } = useAuth()
 const source = ref<'all' | SetSource>('all')
@@ -19,7 +19,7 @@ const emptyPage: SetPage = { items: [], total: 0, limit: 50, offset: 0 }
 const { data: page, status, error, execute: loadInbox } = await useAsyncData<SetPage>('inbox-sets', () => get('/sets?status=inbox', fixturePage), {
   server: false,
   immediate: false,
-  default: () => fixtureValue(config.public.runtimeMode as string, fixturePage, emptyPage)
+  default: () => fixtureValue(runtime.runtimeMode, fixturePage, emptyPage)
 })
 useOperationalLoad(ready, loadInbox)
 const filtered = computed(() => (page.value?.items || []).filter((set) => {

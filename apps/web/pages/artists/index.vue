@@ -2,8 +2,8 @@
 import { demoSets } from '~/data/demo'
 import { fixtureValue } from '~/utils/runtime'
 
-const config = useRuntimeConfig()
-const availableSets = fixtureValue(config.public.runtimeMode as string, demoSets, [])
+const runtime = useSycoRuntime()
+const availableSets = fixtureValue(runtime.runtimeMode, demoSets, [])
 const artists = computed(() => {
   const map = new Map<string, { name: string; sets: number; latest: string }>()
   for (const set of availableSets) {

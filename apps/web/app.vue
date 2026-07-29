@@ -6,7 +6,7 @@ import { fixtureValue } from '~/utils/runtime'
 
 const route = useRoute()
 const router = useRouter()
-const config = useRuntimeConfig()
+const runtime = useSycoRuntime()
 const { get } = useApi()
 const { user, role, ready, signOut } = useAuth()
 const globalSearch = ref('')
@@ -16,7 +16,7 @@ const emptyStats: Stats = { total_sets: 0, by_source: { youtube: 0, soundcloud: 
 const { data: stats, execute: loadStats } = await useAsyncData<Stats>('global-stats', () => get('/stats', demoStats), {
   server: false,
   immediate: false,
-  default: () => fixtureValue(config.public.runtimeMode as string, demoStats, emptyStats)
+  default: () => fixtureValue(runtime.runtimeMode, demoStats, emptyStats)
 })
 useOperationalLoad(ready, loadStats)
 

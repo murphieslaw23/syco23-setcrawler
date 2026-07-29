@@ -4,7 +4,6 @@ import type { ImportJobPage, ImportJobStatus, SetSource } from '~/types'
 import { canRetry, createPollingController, filterJobs } from '~/utils/jobs'
 import { formatDate, sourceLabel } from '~/utils/format'
 
-const config = useRuntimeConfig()
 const { get, send } = useApi()
 const { role, ready, isAdmin, canEdit } = useAuth()
 const source = ref<'all' | SetSource>('all')

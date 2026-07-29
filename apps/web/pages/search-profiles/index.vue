@@ -5,13 +5,13 @@ import { fixtureValue } from '~/utils/runtime'
 import { canManageProviders } from '~/utils/auth'
 import { formatDate } from '~/utils/format'
 
-const config = useRuntimeConfig()
+const runtime = useSycoRuntime()
 const { get, send } = useApi()
 const { ready, role, isAdmin } = useAuth()
 const { data: profiles, error, refresh, execute: loadProfiles } = await useAsyncData<SearchProfile[]>('profiles', () => get('/search-profiles', demoProfiles), {
   server: false,
   immediate: false,
-  default: () => fixtureValue(config.public.runtimeMode as string, demoProfiles, [])
+  default: () => fixtureValue(runtime.runtimeMode, demoProfiles, [])
 })
 useOperationalLoad(ready, loadProfiles)
 const name = ref('')

@@ -4,16 +4,16 @@ import type { ImportJob, ImportJobPage, ProviderHealthStatus, SetPage, Stats } f
 import { fixtureValue } from '~/utils/runtime'
 import { formatDate, sourceLabel } from '~/utils/format'
 
-const config = useRuntimeConfig()
+const runtime = useSycoRuntime()
 const { get } = useApi()
 const { ready, canEdit } = useAuth()
 const { send } = useApi()
 const emptyStats: Stats = { total_sets: 0, by_source: { youtube: 0, soundcloud: 0, freeteknomusic: 0 }, by_status: { inbox: 0, reviewing: 0, accepted: 0, rejected: 0, published: 0 }, score_bands: { high: 0, review: 0, low: 0 }, queue: { queued: 0, processing: 0, failed: 0 } }
 const emptyPage: SetPage = { items: [], total: 0, limit: 3, offset: 0 }
 const emptyProviders: ProviderHealthStatus = { youtube: { configured: false, enabled: false, mode: 'unavailable' }, soundcloud: { configured: false, enabled: false, mode: 'unavailable' }, freeteknomusic: { configured: false, enabled: false, mode: 'unavailable' } }
-const { data: stats, error: statsError, execute: loadStats } = await useAsyncData<Stats>('dashboard-stats', () => get('/stats', demoStats), { server: false, immediate: false, default: () => fixtureValue(config.public.runtimeMode as string, demoStats, emptyStats) })
-const { data: recent, error: recentError, execute: loadRecent } = await useAsyncData<SetPage>('dashboard-recent', () => get('/sets?limit=3', { items: demoSets.slice(0, 3), total: 6, limit: 3, offset: 0 }), { server: false, immediate: false, default: () => fixtureValue(config.public.runtimeMode as string, { items: demoSets.slice(0, 3), total: 6, limit: 3, offset: 0 }, emptyPage) })
-const { data: providers, error: providersError, execute: loadProviders } = await useAsyncData<ProviderHealthStatus>('provider-health', () => get('/providers', demoProviderHealth), { server: false, immediate: false, default: () => fixtureValue(config.public.runtimeMode as string, demoProviderHealth, emptyProviders) })
+const { data: stats, error: statsError, execute: loadStats } = await useAsyncData<Stats>('dashboard-stats', () => get('/stats', demoStats), { server: false, immediate: false, default: () => fixtureValue(runtime.runtimeMode, demoStats, emptyStats) })
+const { data: recent, error: recentError, execute: loadRecent } = await useAsyncData<SetPage>('dashboard-recent', () => get('/sets?limit=3', { items: demoSets.slice(0, 3), total: 6, limit: 3, offset: 0 }), { server: false, immediate: false, default: () => fixtureValue(runtime.runtimeMode, { items: demoSets.slice(0, 3), total: 6, limit: 3, offset: 0 }, emptyPage) })
+const { data: providers, error: providersError, execute: loadProviders } = await useAsyncData<ProviderHealthStatus>('provider-health', () => get('/providers', demoProviderHealth), { server: false, immediate: false, default: () => fixtureValue(runtime.runtimeMode, demoProviderHealth, emptyProviders) })
 const { data: recentJobs, error: jobsError, execute: loadJobs } = await useAsyncData<ImportJobPage>('dashboard-jobs', () => get('/imports/queue?limit=5', { items: demoJobs, total: demoJobs.length, limit: 5, offset: 0 }), { server: false, immediate: false, default: () => ({ items: [], total: 0, limit: 5, offset: 0 }) })
 useOperationalLoad(ready, loadStats)
 useOperationalLoad(ready, loadRecent)
