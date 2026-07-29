@@ -5,6 +5,7 @@ compose_file="${COMPOSE_FILE:-docker-compose.production.yml}"
 env_file="${ENV_FILE:-.env.production}"
 api_domain="${1:-api.syco23.org}"
 health_timeout_seconds="${HEALTH_TIMEOUT_SECONDS:-240}"
+beat_stability_seconds="${BEAT_STABILITY_SECONDS:-20}"
 
 compose() {
   docker compose --env-file "$env_file" -f "$compose_file" "$@"
@@ -24,6 +25,8 @@ trap 'fail "deployment stopped near line $LINENO"' ERR
 [[ -f "$compose_file" ]] || fail "missing $compose_file"
 [[ -f "$env_file" ]] || fail "missing $env_file; copy .env.production.example and fill host-only secrets"
 [[ "$api_domain" =~ ^[A-Za-z0-9.-]+$ ]] || fail "invalid API domain"
+[[ "$health_timeout_seconds" =~ ^[0-9]+$ ]] || fail "HEALTH_TIMEOUT_SECONDS must be an integer"
+[[ "$beat_stability_seconds" =~ ^[0-9]+$ ]] || fail "BEAT_STABILITY_SECONDS must be an integer"
 command -v docker >/dev/null 2>&1 || fail "docker is not installed"
 command -v curl >/dev/null 2>&1 || fail "curl is not installed"
 
@@ -80,8 +83,19 @@ health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{
 
 beat_id="$(compose ps -q worker-beat)"
 [[ -n "$beat_id" ]] || fail "worker-beat container was not created"
-beat_running="$(docker inspect --format '{{.State.Running}}' "$beat_id" 2>/dev/null || true)"
-[[ "$beat_running" == "true" ]] || fail "worker-beat is not running"
+beat_restart_count="$(docker inspect --format '{{.RestartCount}}' "$beat_id" 2>/dev/null || true)"
+[[ "$beat_restart_count" =~ ^[0-9]+$ ]] || fail "could not read worker-beat restart count"
+[[ "$beat_restart_count" == "0" ]] || fail "worker-beat already restarted ${beat_restart_count} time(s)"
+
+printf '[deploy] checking worker-beat stability for %ss\n' "$beat_stability_seconds"
+beat_deadline=$((SECONDS + beat_stability_seconds))
+while (( SECONDS < beat_deadline )); do
+  beat_state="$(docker inspect --format '{{.State.Status}}' "$beat_id" 2>/dev/null || true)"
+  current_restart_count="$(docker inspect --format '{{.RestartCount}}' "$beat_id" 2>/dev/null || true)"
+  [[ "$beat_state" == "running" ]] || fail "worker-beat entered terminal state: $beat_state"
+  [[ "$current_restart_count" == "$beat_restart_count" ]] || fail "worker-beat restarted during the stability window"
+  sleep 2
+done
 
 printf '[deploy] waiting for public HTTPS health at https://%s/health\n' "$api_domain"
 public_deadline=$((SECONDS + health_timeout_seconds))

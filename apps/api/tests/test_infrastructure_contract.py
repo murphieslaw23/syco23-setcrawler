@@ -169,8 +169,10 @@ def test_production_compose_keeps_state_and_secrets_on_the_backend_host() -> Non
         "-A",
         "app.workers.celery_app:celery_app",
         "beat",
+        "--schedule=/tmp/celerybeat-schedule",
         "--loglevel=INFO",
     ]
+    assert "/tmp:size=64m,noexec,nosuid" in services["worker-beat"]["tmpfs"]
     assert sum(" beat " in " ".join(service.get("command", [])) for service in services.values()) == 1
 
     backend_services = [
@@ -202,3 +204,11 @@ def test_production_tls_proxy_targets_only_the_internal_api() -> None:
     assert "{$API_DOMAIN}" in caddyfile
     assert "reverse_proxy api:8000" in caddyfile
     assert "/health" in caddyfile
+
+
+def test_deploy_script_rejects_a_restarting_beat_scheduler() -> None:
+    deploy_script = (ROOT / "scripts" / "deploy-production.sh").read_text()
+
+    assert "BEAT_STABILITY_SECONDS" in deploy_script
+    assert "{{.RestartCount}}" in deploy_script
+    assert 'fail "worker-beat restarted during the stability window"' in deploy_script

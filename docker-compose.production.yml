@@ -144,6 +144,7 @@ services:
       - -A
       - app.workers.celery_app:celery_app
       - beat
+      - --schedule=/tmp/celerybeat-schedule
       - --loglevel=INFO
 
   caddy:
