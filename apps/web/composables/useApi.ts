@@ -1,7 +1,5 @@
 export function useApi() {
-  const config = useRuntimeConfig()
-  const apiBase = config.public.apiBase as string
-  const runtimeMode = config.public.runtimeMode as string
+  const { apiBase, runtimeMode } = useSycoRuntime()
   const { authHeaders } = useAuth()
 
   async function get<T>(path: string, fallback?: T): Promise<T> {
