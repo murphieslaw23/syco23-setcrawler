@@ -1,3 +1,5 @@
+import { useSycoRuntime } from '~/composables/useSycoRuntime'
+
 export function useApi() {
   const { apiBase, runtimeMode } = useSycoRuntime()
   const { authHeaders } = useAuth()
