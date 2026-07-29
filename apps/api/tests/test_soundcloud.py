@@ -1,7 +1,7 @@
 import asyncio
 import json
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -474,12 +474,27 @@ def test_timeout_retries_then_dead_letters(
     )
 
     for retries, delay in ((0, 5), (1, 30), (2, 120)):
+        if retries:
+            current = repository.get_job(job.id)
+            repository.jobs[job.id] = current.model_copy(
+                update={
+                    "next_retry_at": (
+                        datetime.now(UTC) - timedelta(seconds=1)
+                    ),
+                }
+            )
         with task_request(soundcloud_importer.import_soundcloud, retries):
             with pytest.raises(Retry) as retry:
                 soundcloud_importer.import_soundcloud.run(str(job.id))
         assert retry.value.when == delay
         assert repository.get_job(job.id).status is JobStatus.retry
 
+    current = repository.get_job(job.id)
+    repository.jobs[job.id] = current.model_copy(
+        update={
+            "next_retry_at": datetime.now(UTC) - timedelta(seconds=1),
+        }
+    )
     with task_request(soundcloud_importer.import_soundcloud, 3):
         with pytest.raises(
             ProviderTemporaryError,

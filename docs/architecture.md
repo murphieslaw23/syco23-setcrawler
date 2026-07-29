@@ -14,6 +14,8 @@ flowchart LR
   API --> DB[("PostgreSQL / Supabase")]
   API --> DISPATCH["Celery dispatch"]
   DISPATCH --> REDIS[("Redis")]
+  BEAT["Celery beat\nDB redriver"] --> DB
+  BEAT --> REDIS
   REDIS --> YT["YouTube worker\nofficial API"]
   REDIS --> SC["SoundCloud worker\nmetadata-only yt-dlp"]
   REDIS --> FTM["FTM worker\nrobots-aware"]
@@ -89,16 +91,20 @@ Delivery recovery is part of the task protocol:
 - an early duplicate delivery does not call a provider. It schedules the same
   provider task for the remaining lease interval; a publish failure leaves the
   current delivery unacknowledged;
+- a retry row is not claimable before its durable `next_retry_at`, and its
+  failure count remains in PostgreSQL even if Celery recreates the message;
 - provider results are published to the process queue with the exact
   `started_at` token. A stale process delivery is fenced, while a worker-lost
   delivery is redelivered;
 - YouTube profile pages checkpoint immutable child jobs. A separate finalizer
   polls their durable outcomes and fences its parent token.
 
-Under the required reliable Celery/Redis delivery contract, every persisted
-active job therefore has either a live broker delivery, a scheduled
-lease-expiry delivery, or a worker-lost delivery eligible for redelivery. An
-additional database sweeper is not required for this topology.
+Redis AOF reduces message loss during ordinary restarts, but PostgreSQL remains
+authoritative. Celery beat scans a bounded batch of queued, due-retry, and
+lease-expired processing rows every 60 seconds and republishes them to the
+provider queues. This closes the recovery gap after total Redis data loss.
+Concurrent or duplicate redrive publications are harmless because only one
+worker can obtain the database claim.
 
 Idempotency is enforced at several levels:
 

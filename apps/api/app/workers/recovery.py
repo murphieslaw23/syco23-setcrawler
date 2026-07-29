@@ -36,6 +36,23 @@ def claim_or_reschedule(
     if current.status in _TERMINAL_STATUSES:
         return None
     if (
+        current.status is JobStatus.retry
+        and current.next_retry_at is not None
+        and current.next_retry_at > datetime.now(UTC)
+    ):
+        remaining = max(
+            1,
+            ceil(
+                current.next_retry_at.timestamp()
+                - datetime.now(UTC).timestamp()
+            ),
+        )
+        task.apply_async(
+            args=(str(job_id),),
+            countdown=remaining,
+        )
+        return None
+    if (
         current.status is JobStatus.processing
         and current.started_at is not None
     ):

@@ -77,9 +77,11 @@ services:
 
   redis:
     image: redis:7-alpine
-    command: redis-server --save "" --appendonly no
+    command: redis-server --appendonly yes --appendfsync everysec
     ports:
       - "6379:6379"
+    volumes:
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -175,6 +177,28 @@ services:
       redis:
         condition: service_healthy
 
+  worker-beat:
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+    command: celery -A app.workers.celery_app:celery_app beat --loglevel=INFO
+    environment:
+      ENVIRONMENT: local
+      REPOSITORY_MODE: postgres
+      AUTH_MODE: local
+      LOCAL_USER_ROLE: admin
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/syco23
+      REDIS_URL: redis://redis:6379/0
+      JOB_CLAIM_TTL_SECONDS: "${JOB_CLAIM_TTL_SECONDS:-300}"
+      JOB_REDRIVE_INTERVAL_SECONDS: "${JOB_REDRIVE_INTERVAL_SECONDS:-60}"
+      JOB_REDRIVE_BATCH_SIZE: "${JOB_REDRIVE_BATCH_SIZE:-100}"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
 volumes:
   postgres_data:
+  redis_data:
   web_node_modules:

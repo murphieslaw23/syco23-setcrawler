@@ -121,3 +121,13 @@ def test_ci_bootstraps_services_and_applies_all_migrations() -> None:
         "npm run build",
     ):
         assert expected in workflow
+
+
+def test_compose_persists_redis_and_runs_database_redriver() -> None:
+    compose = (ROOT / "docker-compose.yml").read_text()
+
+    assert "redis-server --appendonly yes" in compose
+    assert "redis_data:/data" in compose
+    assert "worker-beat:" in compose
+    assert "celery -A app.workers.celery_app:celery_app beat" in compose
+    assert "\n  redis_data:" in compose

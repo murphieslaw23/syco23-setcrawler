@@ -401,10 +401,16 @@ class InMemoryRepository:
             and job.started_at
             < now - timedelta(seconds=claim_ttl_seconds)
         )
+        is_due_retry = (
+            job.status is JobStatus.retry
+            and (
+                job.next_retry_at is None
+                or job.next_retry_at <= now
+            )
+        )
         if job.status not in {
             JobStatus.queued,
-            JobStatus.retry,
-        } and not is_reclaim:
+        } and not is_due_retry and not is_reclaim:
             return None
         if not is_reclaim:
             validate_job_transition(job.status, JobStatus.processing)
@@ -430,6 +436,41 @@ class InMemoryRepository:
         )
         self.jobs[job_id] = updated
         return deepcopy(updated)
+
+    def list_recoverable_jobs(
+        self,
+        *,
+        claim_ttl_seconds: int,
+        limit: int,
+    ) -> list[ImportJob]:
+        if claim_ttl_seconds < 1:
+            raise ValueError("claim_ttl_seconds must be positive")
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        now = _now()
+        stale_before = now - timedelta(seconds=claim_ttl_seconds)
+        with self._lock:
+            jobs = [
+                job
+                for job in self.jobs.values()
+                if (
+                    job.status is JobStatus.queued
+                    or (
+                        job.status is JobStatus.retry
+                        and (
+                            job.next_retry_at is None
+                            or job.next_retry_at <= now
+                        )
+                    )
+                    or (
+                        job.status is JobStatus.processing
+                        and job.started_at is not None
+                        and job.started_at < stale_before
+                    )
+                )
+            ]
+            jobs.sort(key=lambda item: (item.created_at, str(item.id)))
+            return [deepcopy(job) for job in jobs[:limit]]
 
     def transition_job(
         self, job_id: UUID, patch: ImportJobPatch

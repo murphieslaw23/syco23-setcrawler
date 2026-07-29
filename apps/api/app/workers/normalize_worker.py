@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
+import logging
 from uuid import UUID
 
 from pydantic import ValidationError
@@ -14,6 +15,10 @@ from app.services.import_pipeline import process_payload
 from app.services.import_pipeline import retry_delay
 from app.services.normalizer import RawSetPayload
 from app.workers.celery_app import celery_app
+from app.workers.dispatch import JobDispatcher
+
+
+logger = logging.getLogger(__name__)
 
 
 @lru_cache
@@ -64,8 +69,16 @@ def _record_retry(
         raise ValueError(
             f"Import job {job_id} cannot record a processing failure"
         )
-    if retries < 3:
-        delay = retry_delay(retries + 1)
+    retry_count = max(
+        retries,
+        int(current.details.get("retry_count", 0)),
+    ) + 1
+    details = {
+        **current.details,
+        "retry_count": retry_count,
+    }
+    if retry_count <= 3:
+        delay = retry_delay(retry_count)
         patch = ImportJobPatch(
             status=JobStatus.retry,
             next_retry_at=datetime.now(UTC)
@@ -76,6 +89,7 @@ def _record_retry(
                 if error_message is None
                 else error_message
             ),
+            details=details,
         )
         if claim_started_at is None:
             transitioned = repository.transition_job(job_id, patch)
@@ -90,8 +104,10 @@ def _record_retry(
         return delay
     exhausted = ImportJobPatch(
             status=JobStatus.retry,
+            next_retry_at=None,
             error_code="retry_exhausted",
             error_message=str(error),
+            details=details,
     )
     if claim_started_at is None:
         transitioned = repository.transition_job(job_id, exhausted)
@@ -106,8 +122,10 @@ def _record_retry(
     terminal_patch = ImportJobPatch(
         status=JobStatus.dead_letter,
         finished_at=datetime.now(UTC),
+        next_retry_at=None,
         error_code="retry_exhausted",
         error_message=str(error),
+        details=details,
     )
     if claim_started_at is None:
         repository.transition_job(job_id, terminal_patch)
@@ -118,6 +136,29 @@ def _record_retry(
             terminal_patch,
         )
     return None
+
+
+@celery_app.task(
+    name="app.workers.normalize_worker.redrive_import_jobs",
+)
+def redrive_import_jobs() -> int:
+    """Republish durable work that is absent from or expired in Redis."""
+    repository = get_worker_repository()
+    settings = get_settings()
+    dispatcher = JobDispatcher()
+    jobs = repository.list_recoverable_jobs(
+        claim_ttl_seconds=settings.job_claim_ttl_seconds,
+        limit=settings.job_redrive_batch_size,
+    )
+    dispatched = 0
+    for job in jobs:
+        try:
+            dispatcher.retry(job)
+        except Exception:
+            logger.exception("Failed to redrive import job %s", job.id)
+            continue
+        dispatched += 1
+    return dispatched
 
 
 @celery_app.task(

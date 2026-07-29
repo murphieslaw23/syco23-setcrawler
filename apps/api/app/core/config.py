@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     )
     redis_url: str = "redis://redis:6379/0"
     job_claim_ttl_seconds: int = Field(default=300, ge=1)
+    job_redrive_interval_seconds: int = Field(default=60, ge=5)
+    job_redrive_batch_size: int = Field(default=100, ge=1, le=1_000)
     local_user_id: UUID = UUID("00000000-0000-4000-8000-000000000023")
     local_user_role: Literal["viewer", "editor", "admin"] = "admin"
 

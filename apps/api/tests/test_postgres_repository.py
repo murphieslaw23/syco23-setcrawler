@@ -1,6 +1,6 @@
 import os
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from importlib import import_module
 from uuid import UUID
 
@@ -46,6 +46,7 @@ def test_postgres_repository_jobs_profiles_sets_and_curated_writes() -> None:
     event_id = None
     profile_id = None
     profile_job_id = None
+    retry_gate_job_id = None
     race_job_ids: list[UUID] = []
     race_set_id = None
 
@@ -130,6 +131,65 @@ def test_postgres_repository_jobs_profiles_sets_and_curated_writes() -> None:
         assert transitioned.details["reclaim_count"] == 1
         assert transitioned.details["last_reclaimed_at"]
         assert transitioned.details["reclaimed_started_at"]
+        retry_gate_job = repository.create_job(
+            url="https://soundcloud.com/syco23/retry-gate",
+            source=SetSource.soundcloud,
+            job_type=JobType.url_import,
+        )
+        retry_gate_job_id = retry_gate_job.id
+        retry_gate_claim = repository.claim_job(retry_gate_job.id)
+        assert retry_gate_claim is not None
+        assert retry_gate_claim.started_at is not None
+        retry_gate = repository.transition_claimed_job(
+            retry_gate_job.id,
+            retry_gate_claim.started_at,
+            ImportJobPatch(
+                status=JobStatus.retry,
+                next_retry_at=now + timedelta(hours=1),
+                error_code="temporary",
+                error_message="temporary",
+            ),
+        )
+        assert retry_gate is not None
+        assert repository.claim_job(retry_gate_job.id) is None
+        recoverable_ids = {
+            item.id
+            for item in repository.list_recoverable_jobs(
+                claim_ttl_seconds=300,
+                limit=100,
+            )
+        }
+        assert retry_gate_job.id not in recoverable_ids
+        with pool.connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    update import_jobs
+                    set next_retry_at = now() - interval '1 second'
+                    where id = %s
+                    """,
+                    (retry_gate_job.id,),
+                )
+        recoverable_ids = {
+            item.id
+            for item in repository.list_recoverable_jobs(
+                claim_ttl_seconds=300,
+                limit=100,
+            )
+        }
+        assert retry_gate_job.id in recoverable_ids
+        due_retry_claim = repository.claim_job(retry_gate_job.id)
+        assert due_retry_claim is not None
+        assert due_retry_claim.started_at is not None
+        repository.transition_claimed_job(
+            retry_gate_job.id,
+            due_retry_claim.started_at,
+            ImportJobPatch(
+                status=JobStatus.failed,
+                error_code="test_complete",
+                error_message="test_complete",
+            ),
+        )
         assert page.total >= 1
         assert decided is not None and decided.accepted is True
         assert detail is not None
@@ -278,6 +338,11 @@ def test_postgres_repository_jobs_profiles_sets_and_curated_writes() -> None:
                     cursor.execute(
                         "delete from import_jobs where id = %s",
                         (profile_job_id,),
+                    )
+                if retry_gate_job_id is not None:
+                    cursor.execute(
+                        "delete from import_jobs where id = %s",
+                        (retry_gate_job_id,),
                     )
                 if profile_id is not None:
                     cursor.execute(
