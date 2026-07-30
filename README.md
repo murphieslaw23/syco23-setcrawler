@@ -108,6 +108,7 @@ PYTHONPATH=apps/api .venv/bin/celery -A app.workers.celery_app:celery_app worker
 PYTHONPATH=apps/api .venv/bin/celery -A app.workers.celery_app:celery_app worker -Q soundcloud --concurrency=1 --loglevel=INFO
 PYTHONPATH=apps/api .venv/bin/celery -A app.workers.celery_app:celery_app worker -Q ftm --concurrency=1 --loglevel=INFO
 PYTHONPATH=apps/api .venv/bin/celery -A app.workers.celery_app:celery_app worker -Q process --concurrency=2 --loglevel=INFO
+PYTHONPATH=apps/api .venv/bin/celery -A app.workers.celery_app:celery_app beat --loglevel=INFO
 ```
 
 Use `PROVIDER_MODE=fixture` by default. Change it to `live` only after the
@@ -123,12 +124,12 @@ docker compose up --build
 ```
 
 Compose starts web, API, PostgreSQL, AOF-backed Redis, four queue workers, and
-Celery beat for database redrive. Its
-database initialization adds a small Supabase compatibility shim then applies
-`0001_init.sql`, `0003_indexes.sql`, the provider-job migration, and the final
-release migration. It intentionally does **not** apply `0002_rls.sql`, because
-plain PostgreSQL does not provide Supabase's `auth.uid()` runtime context. Use
-a Supabase project for the RLS migration and real JWT operation.
+Celery beat for database redrive. Its database initialization adds a small
+Supabase compatibility shim then applies `0001_init.sql`, `0003_indexes.sql`,
+the provider-job migration, and the final release migration. It intentionally
+does **not** apply `0002_rls.sql`, because plain PostgreSQL does not provide
+Supabase's `auth.uid()` runtime context. Use a Supabase project for the RLS
+migration and real JWT operation.
 
 ### Persistent production host
 
@@ -253,8 +254,13 @@ Provider workers publish normalized payloads and the exact claim token to the
 late-acknowledged and rejected on worker loss. An early redelivery schedules a
 replacement for lease expiry without calling the provider, while an initial
 broker-publish failure safely terminalizes the new job before the API returns
-`503`. The common process worker computes the configurable set score, detects
-duplicates first by stable `(source, source_id)`, then canonical URL and
+`503`. Retry claims cannot run before durable `next_retry_at`, and the retry
+counter is persisted in job details so broker recreation cannot reset the
+three-failure budget. Celery beat republishes queued, due-retry, and
+lease-expired processing rows from PostgreSQL; duplicate publications remain
+safe because the database claim is atomic and fenced. The common process
+worker computes the configurable set score, detects duplicates first by stable
+`(source, source_id)`, then canonical URL and
 fingerprint, and creates candidate fields. Scores below acceptance are logged
 as discarded jobs; qualifying records are created with
 `review_status='inbox'`. Nothing in the importer changes a set to `published`.
