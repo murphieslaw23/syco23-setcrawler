@@ -222,3 +222,29 @@ def test_deploy_script_rejects_a_restarting_beat_scheduler() -> None:
     assert "BEAT_STABILITY_SECONDS" in deploy_script
     assert "{{.RestartCount}}" in deploy_script
     assert 'fail "worker-beat restarted during the stability window"' in deploy_script
+
+
+def test_ci_governance_and_pull_request_evidence_contract() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    template = (ROOT / ".github" / "pull_request_template.md").read_text()
+
+    for expected in (
+        "workflow_dispatch:",
+        "permissions:",
+        "contents: read",
+        "concurrency:",
+        "cancel-in-progress: true",
+        "timeout-minutes: 20",
+        "timeout-minutes: 15",
+    ):
+        assert expected in workflow
+
+    for expected in (
+        "Migration notes",
+        "Test evidence",
+        "Provider-boundary review",
+        "Secret scan",
+        "Rollback note",
+        "Public-data-leak review",
+    ):
+        assert expected in template
