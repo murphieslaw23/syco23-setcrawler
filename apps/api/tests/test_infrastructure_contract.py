@@ -6,6 +6,16 @@ import yaml
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def test_release_status_names_every_v021_gate() -> None:
+    text = (ROOT / "docs" / "release-status.md").read_text()
+
+    for gate in ("CI runner", "JWT role matrix", "provider smoke", "observability"):
+        assert gate in text
+    for issue in ("#2", "#4", "#5", "#6", "#12"):
+        assert issue in text
+    assert "v0.2.1 must not be tagged" in text
+
+
 def test_compose_exposes_the_provider_worker_contract() -> None:
     compose = (ROOT / "docker-compose.yml").read_text()
 
