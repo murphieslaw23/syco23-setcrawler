@@ -28,6 +28,12 @@ from app.schemas.import_job import validate_job_transition
 from app.repositories.base import ActiveProfileJobsError
 from app.services.heuristic import HeuristicConfig, ScoreResult
 from app.services.normalizer import RawSetPayload
+from app.services.provider_sources import (
+    ProviderSourceProjection,
+    legacy_source_to_provider_key,
+    sanitize_provider_metadata,
+    validate_source_projection,
+)
 
 
 def _now() -> datetime:
@@ -153,6 +159,7 @@ SEED_RECORDS = [
 class InMemoryRepository:
     def __init__(self) -> None:
         self.sets: dict[UUID, SetDetail] = {}
+        self._provider_sources: dict[UUID, ProviderSourceProjection] = {}
         self.jobs: dict[UUID, ImportJob] = {}
         self.profiles: dict[UUID, SearchProfile] = {}
         self._deleted_profile_ids: set[UUID] = set()
@@ -190,6 +197,13 @@ class InMemoryRepository:
                 created_at=now,
                 updated_at=now,
             )
+        for set_id, record in repository.sets.items():
+            repository._provider_sources[set_id] = ProviderSourceProjection(
+                provider_key=legacy_source_to_provider_key(record.source),
+                external_id=record.source_id,
+                canonical_url=record.canonical_url,
+                raw_metadata=sanitize_provider_metadata(record.raw_payload),
+            )
         for name, query in (
             ("Freetekno livesets", "freetekno liveset"),
             ("Tribe B2B", "tribe b2b dj set"),
@@ -209,6 +223,8 @@ class InMemoryRepository:
         limit: int,
         offset: int,
     ) -> SetPage:
+        for record in self.sets.values():
+            self._validate_source_projection_unlocked(record)
         records = list(self.sets.values())
         if source:
             records = [record for record in records if record.source == source]
@@ -232,7 +248,20 @@ class InMemoryRepository:
 
     def get_set(self, set_id: UUID) -> SetDetail | None:
         record = self.sets.get(set_id)
-        return deepcopy(record) if record else None
+        if record is None:
+            return None
+        self._validate_source_projection_unlocked(record)
+        return deepcopy(record)
+
+    def _validate_source_projection_unlocked(self, record: SetDetail) -> None:
+        projection = self._provider_sources.get(record.id)
+        validate_source_projection(
+            legacy_source=record.source,
+            legacy_external_id=record.source_id,
+            provider_key=projection.provider_key if projection else None,
+            provider_external_id=projection.external_id if projection else None,
+            is_primary=projection.is_primary if projection else None,
+        )
 
     def update_set(self, set_id: UUID, patch: SetPatch, actor: str = "local-editor") -> SetDetail | None:
         record = self.sets.get(set_id)
@@ -629,6 +658,7 @@ class InMemoryRepository:
             fingerprint,
         )
         if duplicate_id is not None:
+            self._validate_source_projection_unlocked(self.sets[duplicate_id])
             self.jobs[job_id] = job.model_copy(
                 update={
                     "status": JobStatus.completed,
@@ -688,6 +718,13 @@ class InMemoryRepository:
             created_at=now,
             updated_at=now,
         )
+        self._provider_sources[set_id] = ProviderSourceProjection(
+            provider_key=legacy_source_to_provider_key(payload.source),
+            external_id=payload.source_id,
+            canonical_url=payload.canonical_url,
+            raw_metadata=sanitize_provider_metadata(payload.raw_payload),
+        )
+        self._validate_source_projection_unlocked(self.sets[set_id])
         current = self.jobs.get(job_id)
         if (
             current is not None
@@ -710,6 +747,7 @@ class InMemoryRepository:
             )
             return set_id
         self.sets.pop(set_id, None)
+        self._provider_sources.pop(set_id, None)
         return None
 
     def get_heuristic_config(self) -> HeuristicConfig:
