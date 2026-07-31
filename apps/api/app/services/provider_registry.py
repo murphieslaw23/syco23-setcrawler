@@ -79,13 +79,32 @@ def _descriptor_problems(descriptor: ProviderDescriptor) -> list[str]:
     if not isinstance(descriptor.descriptor_version, int) or descriptor.descriptor_version < 1:
         problems.append(f"provider {label}: descriptor_version must be positive")
 
-    capability_keys = set(descriptor.capabilities)
-    workload_keys = set(descriptor.workload_by_capability)
-    for capability in sorted(capability_keys - workload_keys, key=str):
+    valid_capabilities = {
+        capability
+        for capability in descriptor.capabilities
+        if isinstance(capability, ProviderCapability)
+    }
+    invalid_capabilities = sorted(
+        (
+            str(capability)
+            for capability in descriptor.capabilities
+            if not isinstance(capability, ProviderCapability)
+        )
+    )
+    for capability in invalid_capabilities:
+        problems.append(f"provider {label}: unknown capability declaration {capability}")
+
+    valid_workload_keys = {
+        capability
+        for capability in descriptor.workload_by_capability
+        if isinstance(capability, ProviderCapability)
+    }
+    for capability in sorted(valid_capabilities - valid_workload_keys, key=str):
         problems.append(f"provider {label}: capability {capability.value} has no workload")
-    for capability in sorted(workload_keys - capability_keys, key=str):
-        name = getattr(capability, "value", str(capability))
-        problems.append(f"provider {label}: workload declared for absent capability {name}")
+    for capability in sorted(valid_workload_keys - valid_capabilities, key=str):
+        problems.append(
+            f"provider {label}: workload declared for absent capability {capability.value}"
+        )
     for capability, workload in sorted(
         descriptor.workload_by_capability.items(),
         key=lambda item: str(item[0]),
@@ -114,7 +133,7 @@ def _descriptor_problems(descriptor: ProviderDescriptor) -> list[str]:
     if not patterns:
         problems.append(f"provider {label}: at least one URL matcher is required")
 
-    for setting in sorted(descriptor.required_settings):
+    for setting in sorted(descriptor.required_settings, key=str):
         if not isinstance(setting, str) or _SETTING_NAME.fullmatch(setting) is None:
             problems.append(
                 f"provider {label}: required setting declarations must be variable names"
@@ -126,14 +145,19 @@ def _descriptor_problems(descriptor: ProviderDescriptor) -> list[str]:
 
 def _adapter_problems(descriptor: ProviderDescriptor, adapter: object) -> list[str]:
     problems: list[str] = []
-    for capability in sorted(descriptor.capabilities, key=str):
+    declared = {
+        capability
+        for capability in descriptor.capabilities
+        if isinstance(capability, ProviderCapability)
+    }
+    for capability in sorted(declared, key=str):
         for method_name in _CAPABILITY_METHODS[capability]:
             if not callable(getattr(adapter, method_name, None)):
                 problems.append(
                     f"provider {descriptor.key}: capability {capability.value} requires {method_name}"
                 )
     for capability in ProviderCapability:
-        if capability in descriptor.capabilities:
+        if capability in declared:
             continue
         for method_name in _CAPABILITY_METHODS[capability]:
             if callable(getattr(adapter, method_name, None)):
@@ -153,7 +177,7 @@ def validate_registry(descriptors: Iterable[ProviderDescriptor]) -> tuple[str, .
         problems.extend(_descriptor_problems(descriptor))
 
     keys = [item.key for item in items if isinstance(item, ProviderDescriptor)]
-    for key in sorted(set(keys)):
+    for key in sorted(set(keys), key=str):
         if keys.count(key) > 1:
             problems.append(f"duplicate provider key {key}")
 
@@ -164,7 +188,7 @@ def validate_registry(descriptors: Iterable[ProviderDescriptor]) -> tuple[str, .
         for matcher in descriptor.url_matchers:
             pattern = getattr(matcher, "pattern", None)
             if isinstance(pattern, str):
-                pattern_owners[pattern].add(descriptor.key)
+                pattern_owners[pattern].add(str(descriptor.key))
     for pattern, owners in sorted(pattern_owners.items()):
         if len(owners) > 1:
             problems.append(
@@ -192,7 +216,7 @@ class ProviderRegistry:
         for descriptor in sorted(items, key=lambda item: str(getattr(item, "key", ""))):
             if not isinstance(descriptor, ProviderDescriptor):
                 continue
-            if not callable(descriptor.adapter_factory):
+            if _descriptor_problems(descriptor):
                 continue
             try:
                 adapter = descriptor.adapter_factory()
