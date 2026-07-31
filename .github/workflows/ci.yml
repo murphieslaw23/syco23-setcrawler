@@ -53,6 +53,7 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: |
+          psql --host localhost --username postgres --dbname syco23 --set ON_ERROR_STOP=1 --file ../../docker/postgres/000-supabase-compat.sql
           psql --host localhost --username postgres --dbname syco23 --set ON_ERROR_STOP=1 <<'SQL'
           do $$
           begin
