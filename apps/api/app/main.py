@@ -9,6 +9,7 @@ from app.core.database import create_pool
 from app.repositories.base import Repository
 from app.repository import InMemoryRepository, PostgresRepository
 from app.routers import auth, candidates, health, imports, providers, search_profiles, sets, stats
+from app.services.provider import build_provider_registry, get_provider_registry
 from app.workers.dispatch import JobDispatcher
 
 
@@ -19,6 +20,7 @@ def create_app(
     dispatcher: JobDispatcher | None = None,
 ) -> FastAPI:
     selected_settings = settings or get_settings()
+    uses_default_settings = settings is None
     pool = None
     if repository is None:
         if selected_settings.repository_mode == "memory":
@@ -28,8 +30,13 @@ def create_app(
             repository = PostgresRepository(pool)
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI):
+    async def lifespan(app: FastAPI):
         try:
+            app.state.provider_registry = (
+                get_provider_registry()
+                if uses_default_settings
+                else build_provider_registry(selected_settings)
+            )
             if pool is not None:
                 await to_thread.run_sync(pool.open)
                 await to_thread.run_sync(pool.wait)
@@ -48,6 +55,7 @@ def create_app(
     app.state.job_dispatcher = dispatcher or JobDispatcher()
     app.state.settings = selected_settings
     app.state.database_pool = pool
+    app.state.provider_registry = None
     app.add_middleware(
         CORSMiddleware,
         allow_origins=selected_settings.allowed_origins,
