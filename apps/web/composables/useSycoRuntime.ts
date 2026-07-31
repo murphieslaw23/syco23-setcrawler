@@ -6,14 +6,19 @@ export interface SycoRuntimeConfig {
   supabaseAnonKey: string
 }
 
+interface SycoRuntimePin extends Partial<SycoRuntimeConfig> {
+  enabled?: boolean
+}
+
 interface SycoAppConfig {
-  sycoRuntime?: Partial<SycoRuntimeConfig> | null
+  sycoRuntime?: SycoRuntimePin | null
 }
 
 export function useSycoRuntime(): SycoRuntimeConfig {
   const runtimeConfig = useRuntimeConfig()
   const appConfig = useAppConfig() as SycoAppConfig
-  const pinned = appConfig.sycoRuntime
+  const candidate = appConfig.sycoRuntime
+  const pinned = candidate?.enabled === true ? candidate : null
 
   return {
     apiBase: String(pinned?.apiBase ?? runtimeConfig.public.apiBase ?? 'http://localhost:8000'),
