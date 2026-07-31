@@ -8,8 +8,8 @@ from app.schemas.import_job import ImportJobPatch, JobStatus
 from app.services.provider import (
     ProviderError,
     ProviderTemporaryError,
+    get_provider_registry,
 )
-from app.services.soundcloud import SoundCloudAdapter
 from app.workers.celery_app import celery_app
 from app.workers.normalize_worker import (
     _record_retry,
@@ -19,8 +19,8 @@ from app.workers.process_dispatch import dispatch_process_payload
 from app.workers.recovery import claim_or_reschedule
 
 
-def get_soundcloud_adapter() -> SoundCloudAdapter:
-    return SoundCloudAdapter()
+def get_soundcloud_adapter() -> object:
+    return get_provider_registry().adapter("soundcloud")
 
 
 def _fail_job(
