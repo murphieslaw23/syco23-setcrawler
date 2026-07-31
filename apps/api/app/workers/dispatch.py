@@ -5,10 +5,10 @@ from app.workers.provider_routing import dispatch_job
 
 class JobDispatcher:
     def dispatch_url(self, job: ImportJob) -> None:
-        dispatch_job(job)
+        dispatch_job(job, celery=celery_app)
 
     def dispatch_profile(self, job: ImportJob) -> None:
-        dispatch_job(job)
+        dispatch_job(job, celery=celery_app)
 
     def retry(self, job: ImportJob) -> None:
         if job.job_type is JobType.search_profile:
