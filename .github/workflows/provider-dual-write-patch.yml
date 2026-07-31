@@ -1,0 +1,403 @@
+name: provider-dual-write-patch
+
+on:
+  push:
+    branches:
+      - feat/v0.3-provider-dual-write
+    paths:
+      - .github/workflows/provider-dual-write-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/v0.3-provider-dual-write
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Patch repositories and integration fixture
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one match, found {count}: {old[:100]!r}")
+              target.write_text(text.replace(old, new, 1))
+
+          memory = "apps/api/app/repositories/memory.py"
+          replace_once(
+              memory,
+              "from app.services.normalizer import RawSetPayload\n",
+              "from app.services.normalizer import RawSetPayload\n"
+              "from app.services.provider_sources import (\n"
+              "    ProviderSourceProjection,\n"
+              "    sanitize_provider_metadata,\n"
+              "    validate_source_projection,\n"
+              ")\n",
+          )
+          replace_once(
+              memory,
+              "        self.sets: dict[UUID, SetDetail] = {}\n"
+              "        self.jobs: dict[UUID, ImportJob] = {}\n",
+              "        self.sets: dict[UUID, SetDetail] = {}\n"
+              "        self._provider_sources: dict[UUID, ProviderSourceProjection] = {}\n"
+              "        self.jobs: dict[UUID, ImportJob] = {}\n",
+          )
+          replace_once(
+              memory,
+              "        for name, query in (\n",
+              "        for set_id, record in repository.sets.items():\n"
+              "            repository._provider_sources[set_id] = ProviderSourceProjection(\n"
+              "                provider_key=legacy_source_to_provider_key(record.source),\n"
+              "                external_id=record.source_id,\n"
+              "                canonical_url=record.canonical_url,\n"
+              "                raw_metadata=sanitize_provider_metadata(record.raw_payload),\n"
+              "            )\n"
+              "        for name, query in (\n",
+          )
+          replace_once(
+              memory,
+              "    def list_sets(\n"
+              "        self,\n"
+              "        *,\n"
+              "        source: SetSource | None,\n"
+              "        status: ReviewStatus | None,\n"
+              "        min_score: float | None,\n"
+              "        search: str | None,\n"
+              "        limit: int,\n"
+              "        offset: int,\n"
+              "    ) -> SetPage:\n"
+              "        records = list(self.sets.values())\n",
+              "    def list_sets(\n"
+              "        self,\n"
+              "        *,\n"
+              "        source: SetSource | None,\n"
+              "        status: ReviewStatus | None,\n"
+              "        min_score: float | None,\n"
+              "        search: str | None,\n"
+              "        limit: int,\n"
+              "        offset: int,\n"
+              "    ) -> SetPage:\n"
+              "        for record in self.sets.values():\n"
+              "            self._validate_source_projection_unlocked(record)\n"
+              "        records = list(self.sets.values())\n",
+          )
+          replace_once(
+              memory,
+              "    def get_set(self, set_id: UUID) -> SetDetail | None:\n"
+              "        record = self.sets.get(set_id)\n"
+              "        return deepcopy(record) if record else None\n",
+              "    def get_set(self, set_id: UUID) -> SetDetail | None:\n"
+              "        record = self.sets.get(set_id)\n"
+              "        if record is None:\n"
+              "            return None\n"
+              "        self._validate_source_projection_unlocked(record)\n"
+              "        return deepcopy(record)\n"
+              "\n"
+              "    def _validate_source_projection_unlocked(self, record: SetDetail) -> None:\n"
+              "        projection = self._provider_sources.get(record.id)\n"
+              "        validate_source_projection(\n"
+              "            legacy_source=record.source,\n"
+              "            legacy_external_id=record.source_id,\n"
+              "            provider_key=projection.provider_key if projection else None,\n"
+              "            provider_external_id=projection.external_id if projection else None,\n"
+              "            is_primary=projection.is_primary if projection else None,\n"
+              "        )\n",
+          )
+          replace_once(
+              memory,
+              "from app.services.provider_sources import (\n"
+              "    ProviderSourceProjection,\n"
+              "    sanitize_provider_metadata,\n"
+              "    validate_source_projection,\n"
+              ")\n",
+              "from app.services.provider_sources import (\n"
+              "    ProviderSourceProjection,\n"
+              "    legacy_source_to_provider_key,\n"
+              "    sanitize_provider_metadata,\n"
+              "    validate_source_projection,\n"
+              ")\n",
+          )
+          replace_once(
+              memory,
+              "        current = self.jobs.get(job_id)\n"
+              "        if (\n"
+              "            current is not None\n"
+              "            and current.status is JobStatus.processing\n"
+              "            and current.started_at == claim_started_at\n"
+              "        ):\n",
+              "        self._provider_sources[set_id] = ProviderSourceProjection(\n"
+              "            provider_key=legacy_source_to_provider_key(payload.source),\n"
+              "            external_id=payload.source_id,\n"
+              "            canonical_url=payload.canonical_url,\n"
+              "            raw_metadata=sanitize_provider_metadata(payload.raw_payload),\n"
+              "        )\n"
+              "        self._validate_source_projection_unlocked(self.sets[set_id])\n"
+              "        current = self.jobs.get(job_id)\n"
+              "        if (\n"
+              "            current is not None\n"
+              "            and current.status is JobStatus.processing\n"
+              "            and current.started_at == claim_started_at\n"
+              "        ):\n",
+          )
+          replace_once(
+              memory,
+              "        self.sets.pop(set_id, None)\n"
+              "        return None\n",
+              "        self.sets.pop(set_id, None)\n"
+              "        self._provider_sources.pop(set_id, None)\n"
+              "        return None\n",
+          )
+          replace_once(
+              memory,
+              "        if duplicate_id is not None:\n"
+              "            self.jobs[job_id] = job.model_copy(\n",
+              "        if duplicate_id is not None:\n"
+              "            self._validate_source_projection_unlocked(self.sets[duplicate_id])\n"
+              "            self.jobs[job_id] = job.model_copy(\n",
+          )
+
+          postgres = "apps/api/app/repositories/postgres.py"
+          replace_once(
+              postgres,
+              "from app.services.normalizer import RawSetPayload\n",
+              "from app.services.normalizer import RawSetPayload\n"
+              "from app.services.provider_sources import (\n"
+              "    SourceIntegrityError,\n"
+              "    legacy_source_to_provider_key,\n"
+              "    sanitize_provider_metadata,\n"
+              "    validate_source_projection,\n"
+              ")\n",
+          )
+          replace_once(
+              postgres,
+              "    ) as primary_image_url\n"
+              "from sets s\n",
+              "    ) as primary_image_url,\n"
+              "    (\n"
+              "        select p.key\n"
+              "        from set_provider_items spi\n"
+              "        join provider_items pi on pi.id = spi.provider_item_id\n"
+              "        join providers p on p.id = pi.provider_id\n"
+              "        where spi.set_id = s.id\n"
+              "          and spi.relationship = 'source'\n"
+              "          and spi.is_primary\n"
+              "        limit 1\n"
+              "    ) as linked_provider_key,\n"
+              "    (\n"
+              "        select pi.external_id\n"
+              "        from set_provider_items spi\n"
+              "        join provider_items pi on pi.id = spi.provider_item_id\n"
+              "        where spi.set_id = s.id\n"
+              "          and spi.relationship = 'source'\n"
+              "          and spi.is_primary\n"
+              "        limit 1\n"
+              "    ) as linked_provider_external_id,\n"
+              "    (\n"
+              "        select spi.is_primary\n"
+              "        from set_provider_items spi\n"
+              "        where spi.set_id = s.id\n"
+              "          and spi.relationship = 'source'\n"
+              "          and spi.is_primary\n"
+              "        limit 1\n"
+              "    ) as linked_is_primary\n"
+              "from sets s\n",
+          )
+          replace_once(
+              postgres,
+              "def _summary(row: dict[str, Any]) -> SetSummary:\n"
+              "    return SetSummary(\n"
+              "        **row,\n"
+              "        score_reasons=list(row.get(\"raw_payload\", {}).get(\"score_reasons\", [])),\n"
+              "        import_job_id=row.get(\"raw_payload\", {}).get(\"import_job_id\"),\n"
+              "        duplicate_of_id=row.get(\"raw_payload\", {}).get(\"duplicate_of_id\"),\n"
+              "    )\n",
+              "def _summary(row: dict[str, Any]) -> SetSummary:\n"
+              "    values = dict(row)\n"
+              "    validate_source_projection(\n"
+              "        legacy_source=values[\"source\"],\n"
+              "        legacy_external_id=values[\"source_id\"],\n"
+              "        provider_key=values.pop(\"linked_provider_key\", None),\n"
+              "        provider_external_id=values.pop(\"linked_provider_external_id\", None),\n"
+              "        is_primary=values.pop(\"linked_is_primary\", None),\n"
+              "    )\n"
+              "    return SetSummary(\n"
+              "        **values,\n"
+              "        score_reasons=list(values.get(\"raw_payload\", {}).get(\"score_reasons\", [])),\n"
+              "        import_job_id=values.get(\"raw_payload\", {}).get(\"import_job_id\"),\n"
+              "        duplicate_of_id=values.get(\"raw_payload\", {}).get(\"duplicate_of_id\"),\n"
+              "    )\n",
+          )
+          replace_once(
+              postgres,
+              "        review_status = ReviewStatus.inbox\n"
+              "        with self.pool.connection() as connection:\n",
+              "        review_status = ReviewStatus.inbox\n"
+              "        provider_key = legacy_source_to_provider_key(payload.source)\n"
+              "        provider_metadata = sanitize_provider_metadata(payload.raw_payload)\n"
+              "        with self.pool.connection() as connection:\n",
+          )
+          replace_once(
+              postgres,
+              "                if duplicate is not None:\n"
+              "                    transitioned = cursor.execute(\n",
+              "                if duplicate is not None:\n"
+              "                    _assert_persisted_source_projection(cursor, duplicate[\"id\"])\n"
+              "                    transitioned = cursor.execute(\n",
+          )
+          replace_once(
+              postgres,
+              "                set_row = cursor.execute(\n"
+              "                    \"\"\"\n"
+              "                    insert into sets (\n",
+              "                provider = cursor.execute(\n"
+              "                    \"\"\"\n"
+              "                    select id from providers where key = %s\n"
+              "                    \"\"\",\n"
+              "                    (provider_key,),\n"
+              "                ).fetchone()\n"
+              "                if provider is None:\n"
+              "                    raise SourceIntegrityError(\n"
+              "                        f\"source projection provider {provider_key} is not registered\"\n"
+              "                    )\n"
+              "                provider_item = cursor.execute(\n"
+              "                    \"\"\"\n"
+              "                    insert into provider_items (\n"
+              "                        provider_id, external_id, canonical_url, title,\n"
+              "                        published_at, duration_seconds, raw_metadata,\n"
+              "                        metadata_fetched_at\n"
+              "                    ) values (%s, %s, %s, %s, %s, %s, %s, now())\n"
+              "                    on conflict (provider_id, external_id) do update\n"
+              "                    set canonical_url = excluded.canonical_url,\n"
+              "                        title = excluded.title,\n"
+              "                        published_at = excluded.published_at,\n"
+              "                        duration_seconds = excluded.duration_seconds,\n"
+              "                        raw_metadata = excluded.raw_metadata,\n"
+              "                        metadata_fetched_at = excluded.metadata_fetched_at,\n"
+              "                        updated_at = now()\n"
+              "                    returning id\n"
+              "                    \"\"\",\n"
+              "                    (\n"
+              "                        provider[\"id\"],\n"
+              "                        payload.source_id,\n"
+              "                        payload.canonical_url,\n"
+              "                        payload.title,\n"
+              "                        payload.published_at,\n"
+              "                        payload.duration_seconds,\n"
+              "                        Jsonb(provider_metadata),\n"
+              "                    ),\n"
+              "                ).fetchone()\n"
+              "                set_row = cursor.execute(\n"
+              "                    \"\"\"\n"
+              "                    insert into sets (\n",
+          )
+          replace_once(
+              postgres,
+              "                set_id = set_row[\"id\"]\n"
+              "                for candidate in candidates:\n",
+              "                set_id = set_row[\"id\"]\n"
+              "                cursor.execute(\n"
+              "                    \"\"\"\n"
+              "                    insert into set_provider_items (\n"
+              "                        set_id, provider_item_id, relationship, is_primary\n"
+              "                    ) values (%s, %s, 'source', true)\n"
+              "                    \"\"\",\n"
+              "                    (set_id, provider_item[\"id\"]),\n"
+              "                )\n"
+              "                _assert_persisted_source_projection(cursor, set_id)\n"
+              "                for candidate in candidates:\n",
+          )
+          replace_once(
+              postgres,
+              "def _get_or_create_event(cursor: Any, set_id: UUID) -> UUID:\n",
+              "def _assert_persisted_source_projection(cursor: Any, set_id: UUID) -> None:\n"
+              "    row = cursor.execute(\n"
+              "        \"\"\"\n"
+              "        select\n"
+              "            sets.source,\n"
+              "            sets.source_id,\n"
+              "            providers.key as provider_key,\n"
+              "            provider_items.external_id as provider_external_id,\n"
+              "            links.is_primary\n"
+              "        from sets\n"
+              "        left join set_provider_items links\n"
+              "          on links.set_id = sets.id\n"
+              "         and links.relationship = 'source'\n"
+              "         and links.is_primary\n"
+              "        left join provider_items\n"
+              "          on provider_items.id = links.provider_item_id\n"
+              "        left join providers\n"
+              "          on providers.id = provider_items.provider_id\n"
+              "        where sets.id = %s\n"
+              "        \"\"\",\n"
+              "        (set_id,),\n"
+              "    ).fetchone()\n"
+              "    if row is None:\n"
+              "        raise SourceIntegrityError(\"source projection set does not exist\")\n"
+              "    validate_source_projection(\n"
+              "        legacy_source=row[\"source\"],\n"
+              "        legacy_external_id=row[\"source_id\"],\n"
+              "        provider_key=row[\"provider_key\"],\n"
+              "        provider_external_id=row[\"provider_external_id\"],\n"
+              "        is_primary=row[\"is_primary\"],\n"
+              "    )\n"
+              "\n"
+              "\n"
+              "def _get_or_create_event(cursor: Any, set_id: UUID) -> UUID:\n",
+          )
+
+          integration = "apps/api/tests/test_postgres_repository.py"
+          replace_once(
+              integration,
+              "                cursor.execute(\n"
+              "                    \"insert into auth.users (id) values (%s) on conflict do nothing\",\n",
+              "                provider_item = cursor.execute(\n"
+              "                    \"\"\"\n"
+              "                    insert into provider_items (\n"
+              "                        provider_id, external_id, canonical_url, raw_metadata\n"
+              "                    )\n"
+              "                    select id, 'task-2', %s, '{}'::jsonb\n"
+              "                    from providers where key = 'soundcloud'\n"
+              "                    on conflict (provider_id, external_id) do update\n"
+              "                    set canonical_url = excluded.canonical_url\n"
+              "                    returning id\n"
+              "                    \"\"\",\n"
+              "                    (\"https://soundcloud.com/syco23/task-2\",),\n"
+              "                ).fetchone()\n"
+              "                cursor.execute(\n"
+              "                    \"\"\"\n"
+              "                    insert into set_provider_items (\n"
+              "                        set_id, provider_item_id, relationship, is_primary\n"
+              "                    ) values (%s, %s, 'source', true)\n"
+              "                    on conflict (set_id, provider_item_id, relationship)\n"
+              "                    do update set is_primary = true\n"
+              "                    \"\"\",\n"
+              "                    (set_id, provider_item[\"id\"]),\n"
+              "                )\n"
+              "                cursor.execute(\n"
+              "                    \"insert into auth.users (id) values (%s) on conflict do nothing\",\n",
+          )
+
+          Path(".github/workflows/provider-dual-write-patch.yml").unlink()
+          PY
+      - name: Commit implementation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/api/app/repositories/memory.py \
+                  apps/api/app/repositories/postgres.py \
+                  apps/api/tests/test_postgres_repository.py \
+                  .github/workflows/provider-dual-write-patch.yml
+          git commit -m "feat: dual-write provider sources transactionally"
+          git push origin HEAD:feat/v0.3-provider-dual-write
