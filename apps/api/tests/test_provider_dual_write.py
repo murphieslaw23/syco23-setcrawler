@@ -281,7 +281,7 @@ def test_postgres_repository_dual_write_mismatch_and_rollback() -> None:
                 assert cursor.execute(
                     "select count(*) from public.sets where source_id = %s",
                     (rollback_payload.source_id,),
-                ).fetchone()[0] == 0
+                ).fetchone()["count"] == 0
                 assert cursor.execute(
                     """
                     select count(*)
@@ -289,7 +289,7 @@ def test_postgres_repository_dual_write_mismatch_and_rollback() -> None:
                     where external_id = %s
                     """,
                     (rollback_payload.source_id,),
-                ).fetchone()[0] == 0
+                ).fetchone()["count"] == 0
                 state = cursor.execute(
                     "select status, result_set_id from import_jobs where id = %s",
                     (rollback_job.id,),
