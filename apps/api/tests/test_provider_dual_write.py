@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 from datetime import UTC, datetime
 from importlib import import_module
-from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
@@ -49,10 +48,9 @@ def _payload(source: SetSource, suffix: str) -> RawSetPayload:
             "channel": "SYCO23",
             "local_path": "/tmp/forbidden.mp3",
             "nested": {
-                "media_bytes": b"forbidden",
+                "media_bytes": "forbidden-provider-field",
                 "license": "metadata-only",
             },
-            "filesystem": Path("/tmp/forbidden.mp3"),
         },
     )
 
@@ -301,12 +299,17 @@ def test_postgres_repository_dual_write_mismatch_and_rollback() -> None:
     finally:
         with pool.connection() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(f"drop trigger if exists {trigger_name} on public.set_provider_items")
+                cursor.execute(
+                    f"drop trigger if exists {trigger_name} on public.set_provider_items"
+                )
                 cursor.execute(f"drop function if exists public.{function_name}()")
                 if set_ids:
                     cursor.execute("delete from public.sets where id = any(%s)", (set_ids,))
                 if job_ids:
-                    cursor.execute("delete from public.import_jobs where id = any(%s)", (job_ids,))
+                    cursor.execute(
+                        "delete from public.import_jobs where id = any(%s)",
+                        (job_ids,),
+                    )
                 cursor.execute(
                     """
                     delete from public.provider_items
