@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   patch-dual-write-tests:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/feat/v0.3-provider-dual-write'
+    if: github.event_name == 'pull_request' && github.head_ref == 'feat/v0.3-provider-dual-write'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
