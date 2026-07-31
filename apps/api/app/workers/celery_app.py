@@ -24,9 +24,9 @@ celery_app.conf.update(
         },
     },
     task_routes={
-        "app.workers.youtube_poller.*": {"queue": "youtube"},
-        "app.workers.soundcloud_importer.*": {"queue": "soundcloud"},
-        "app.workers.ftm_scraper.*": {"queue": "ftm"},
+        "app.workers.youtube_poller.*": {"queue": "provider-api"},
+        "app.workers.soundcloud_importer.*": {"queue": "provider-scrape"},
+        "app.workers.ftm_scraper.*": {"queue": "provider-scrape"},
         "app.workers.normalize_worker.*": {"queue": "process"},
     },
 )
