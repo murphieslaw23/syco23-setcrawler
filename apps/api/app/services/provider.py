@@ -78,6 +78,12 @@ class _YouTubeRegistryAdapter:
     def __init__(self, delegate: object) -> None:
         self._delegate = delegate
 
+    async def fetch(self, reference: str) -> RawSetPayload:
+        return await self._delegate.fetch(reference)
+
+    async def search(self, profile: object) -> object:
+        return await self._delegate.search(profile)
+
     async def discover(self, request: DiscoveryRequest) -> DiscoveryPage:
         from app.schemas.profile import SearchProfile
 
@@ -89,17 +95,14 @@ class _YouTubeRegistryAdapter:
             query=query.strip(),
             next_page_token=request.cursor,
         )
-        batch = await self._delegate.search(profile)
+        batch = await self.search(profile)
         return DiscoveryPage(
-            items=tuple(
-                _item_payload("youtube", payload)
-                for payload in batch.payloads
-            ),
+            items=tuple(_item_payload("youtube", payload) for payload in batch.payloads),
             next_cursor=batch.next_page_token,
         )
 
     async def resolve_metadata(self, reference: str) -> ProviderItemPayload:
-        payload = await self._delegate.fetch(reference)
+        payload = await self.fetch(reference)
         return _item_payload(
             "youtube",
             payload,
@@ -119,8 +122,11 @@ class _SoundCloudRegistryAdapter:
     def __init__(self, delegate: object) -> None:
         self._delegate = delegate
 
+    async def fetch(self, reference: str) -> RawSetPayload:
+        return await self._delegate.fetch(reference)
+
     async def resolve_metadata(self, reference: str) -> ProviderItemPayload:
-        payload = await self._delegate.fetch(reference)
+        payload = await self.fetch(reference)
         return _item_payload(
             "soundcloud",
             payload,
@@ -137,11 +143,17 @@ class _FTMRegistryAdapter:
     def __init__(self, delegate: object) -> None:
         self._delegate = delegate
 
+    async def fetch(self, reference: str) -> RawSetPayload:
+        return await self._delegate.fetch(reference)
+
+    async def crawl(self, start_url: str, *, max_pages: int | None = None) -> list[RawSetPayload]:
+        return await self._delegate.crawl(start_url, max_pages=max_pages)
+
     async def discover(self, request: DiscoveryRequest) -> DiscoveryPage:
         start_url = request.parameters.get("start_url")
         if not isinstance(start_url, str):
             raise ProviderValidationError("ftm_start_url_invalid")
-        payloads = await self._delegate.crawl(start_url, max_pages=request.limit)
+        payloads = await self.crawl(start_url, max_pages=request.limit)
         return DiscoveryPage(
             items=tuple(
                 _item_payload(
@@ -157,7 +169,7 @@ class _FTMRegistryAdapter:
         )
 
     async def resolve_metadata(self, reference: str) -> ProviderItemPayload:
-        payload = await self._delegate.fetch(reference)
+        payload = await self.fetch(reference)
         return _item_payload(
             "ftm",
             payload,
@@ -174,7 +186,7 @@ class _FTMRegistryAdapter:
 
 
 def build_provider_descriptors(settings: Settings) -> tuple[ProviderDescriptor, ...]:
-    """Describe built-ins without switching current execution to the registry."""
+    """Build behavior, workload, and task descriptors for current providers."""
 
     def youtube_factory() -> object:
         from app.services.youtube import YouTubeAdapter
@@ -225,6 +237,10 @@ def build_provider_descriptors(settings: Settings) -> tuple[ProviderDescriptor, 
                 ProviderCapability.metadata: ProviderWorkload.provider_api,
                 ProviderCapability.embed: ProviderWorkload.provider_api,
             },
+            task_by_capability={
+                ProviderCapability.discovery: "app.workers.youtube_poller.poll_profile",
+                ProviderCapability.metadata: "app.workers.youtube_poller.import_url",
+            },
             adapter_factory=youtube_factory,
             url_matchers=(
                 re.compile(
@@ -246,6 +262,9 @@ def build_provider_descriptors(settings: Settings) -> tuple[ProviderDescriptor, 
             workload_by_capability={
                 ProviderCapability.metadata: ProviderWorkload.provider_scrape,
                 ProviderCapability.embed: ProviderWorkload.provider_scrape,
+            },
+            task_by_capability={
+                ProviderCapability.metadata: "app.workers.soundcloud_importer.import_url",
             },
             adapter_factory=soundcloud_factory,
             url_matchers=(
@@ -269,6 +288,9 @@ def build_provider_descriptors(settings: Settings) -> tuple[ProviderDescriptor, 
                 ProviderCapability.discovery: ProviderWorkload.provider_scrape,
                 ProviderCapability.metadata: ProviderWorkload.provider_scrape,
                 ProviderCapability.license_evidence: ProviderWorkload.provider_scrape,
+            },
+            task_by_capability={
+                ProviderCapability.metadata: "app.workers.ftm_scraper.import_url",
             },
             adapter_factory=ftm_factory,
             url_matchers=(
