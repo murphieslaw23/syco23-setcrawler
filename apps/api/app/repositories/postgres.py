@@ -29,6 +29,12 @@ from app.schemas.import_job import validate_job_transition
 from app.repositories.base import ActiveProfileJobsError
 from app.services.heuristic import HeuristicConfig, ScoreResult
 from app.services.normalizer import RawSetPayload
+from app.services.provider_sources import (
+    SourceIntegrityError,
+    legacy_source_to_provider_key,
+    sanitize_provider_metadata,
+    validate_source_projection,
+)
 
 
 _SET_SELECT = """
@@ -61,7 +67,34 @@ select
         where si.set_id = s.id
         order by si.is_primary desc, si.priority desc, i.created_at
         limit 1
-    ) as primary_image_url
+    ) as primary_image_url,
+    (
+        select p.key
+        from set_provider_items spi
+        join provider_items pi on pi.id = spi.provider_item_id
+        join providers p on p.id = pi.provider_id
+        where spi.set_id = s.id
+          and spi.relationship = 'source'
+          and spi.is_primary
+        limit 1
+    ) as linked_provider_key,
+    (
+        select pi.external_id
+        from set_provider_items spi
+        join provider_items pi on pi.id = spi.provider_item_id
+        where spi.set_id = s.id
+          and spi.relationship = 'source'
+          and spi.is_primary
+        limit 1
+    ) as linked_provider_external_id,
+    (
+        select spi.is_primary
+        from set_provider_items spi
+        where spi.set_id = s.id
+          and spi.relationship = 'source'
+          and spi.is_primary
+        limit 1
+    ) as linked_is_primary
 from sets s
 """
 
@@ -100,11 +133,19 @@ def _candidate(row: dict[str, Any]) -> Candidate:
 
 
 def _summary(row: dict[str, Any]) -> SetSummary:
+    values = dict(row)
+    validate_source_projection(
+        legacy_source=values["source"],
+        legacy_external_id=values["source_id"],
+        provider_key=values.pop("linked_provider_key", None),
+        provider_external_id=values.pop("linked_provider_external_id", None),
+        is_primary=values.pop("linked_is_primary", None),
+    )
     return SetSummary(
-        **row,
-        score_reasons=list(row.get("raw_payload", {}).get("score_reasons", [])),
-        import_job_id=row.get("raw_payload", {}).get("import_job_id"),
-        duplicate_of_id=row.get("raw_payload", {}).get("duplicate_of_id"),
+        **values,
+        score_reasons=list(values.get("raw_payload", {}).get("score_reasons", [])),
+        import_job_id=values.get("raw_payload", {}).get("import_job_id"),
+        duplicate_of_id=values.get("raw_payload", {}).get("duplicate_of_id"),
     )
 
 
@@ -573,6 +614,8 @@ class PostgresRepository:
             "import_job_id": str(job_id),
         }
         review_status = ReviewStatus.inbox
+        provider_key = legacy_source_to_provider_key(payload.source)
+        provider_metadata = sanitize_provider_metadata(payload.raw_payload)
         with self.pool.connection() as connection:
             with connection.cursor() as cursor:
                 admitted_identities = sorted(
@@ -635,6 +678,7 @@ class PostgresRepository:
                     ),
                 ).fetchone()
                 if duplicate is not None:
+                    _assert_persisted_source_projection(cursor, duplicate["id"])
                     transitioned = cursor.execute(
                         """
                         update import_jobs
@@ -665,6 +709,43 @@ class PostgresRepository:
                             "Import job changed while persisting duplicate"
                         )
                     return duplicate["id"]
+                provider = cursor.execute(
+                    """
+                    select id from providers where key = %s
+                    """,
+                    (provider_key,),
+                ).fetchone()
+                if provider is None:
+                    raise SourceIntegrityError(
+                        f"source projection provider {provider_key} is not registered"
+                    )
+                provider_item = cursor.execute(
+                    """
+                    insert into provider_items (
+                        provider_id, external_id, canonical_url, title,
+                        published_at, duration_seconds, raw_metadata,
+                        metadata_fetched_at
+                    ) values (%s, %s, %s, %s, %s, %s, %s, now())
+                    on conflict (provider_id, external_id) do update
+                    set canonical_url = excluded.canonical_url,
+                        title = excluded.title,
+                        published_at = excluded.published_at,
+                        duration_seconds = excluded.duration_seconds,
+                        raw_metadata = excluded.raw_metadata,
+                        metadata_fetched_at = excluded.metadata_fetched_at,
+                        updated_at = now()
+                    returning id
+                    """,
+                    (
+                        provider["id"],
+                        payload.source_id,
+                        payload.canonical_url,
+                        payload.title,
+                        payload.published_at,
+                        payload.duration_seconds,
+                        Jsonb(provider_metadata),
+                    ),
+                ).fetchone()
                 set_row = cursor.execute(
                     """
                     insert into sets (
@@ -688,6 +769,15 @@ class PostgresRepository:
                     ),
                 ).fetchone()
                 set_id = set_row["id"]
+                cursor.execute(
+                    """
+                    insert into set_provider_items (
+                        set_id, provider_item_id, relationship, is_primary
+                    ) values (%s, %s, 'source', true)
+                    """,
+                    (set_id, provider_item["id"]),
+                )
+                _assert_persisted_source_projection(cursor, set_id)
                 for candidate in candidates:
                     cursor.execute(
                         """
@@ -1415,6 +1505,39 @@ class PostgresRepository:
             "score_bands": dict(score),
             "queue": queue,
         }
+
+
+def _assert_persisted_source_projection(cursor: Any, set_id: UUID) -> None:
+    row = cursor.execute(
+        """
+        select
+            sets.source,
+            sets.source_id,
+            providers.key as provider_key,
+            provider_items.external_id as provider_external_id,
+            links.is_primary
+        from sets
+        left join set_provider_items links
+          on links.set_id = sets.id
+         and links.relationship = 'source'
+         and links.is_primary
+        left join provider_items
+          on provider_items.id = links.provider_item_id
+        left join providers
+          on providers.id = provider_items.provider_id
+        where sets.id = %s
+        """,
+        (set_id,),
+    ).fetchone()
+    if row is None:
+        raise SourceIntegrityError("source projection set does not exist")
+    validate_source_projection(
+        legacy_source=row["source"],
+        legacy_external_id=row["source_id"],
+        provider_key=row["provider_key"],
+        provider_external_id=row["provider_external_id"],
+        is_primary=row["is_primary"],
+    )
 
 
 def _get_or_create_event(cursor: Any, set_id: UUID) -> UUID:

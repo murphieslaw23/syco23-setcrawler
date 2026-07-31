@@ -82,6 +82,29 @@ def test_postgres_repository_jobs_profiles_sets_and_curated_writes() -> None:
                     """,
                     (competing_candidate_id, set_id),
                 )
+                provider_item = cursor.execute(
+                    """
+                    insert into provider_items (
+                        provider_id, external_id, canonical_url, raw_metadata
+                    )
+                    select id, 'task-2', %s, '{}'::jsonb
+                    from providers where key = 'soundcloud'
+                    on conflict (provider_id, external_id) do update
+                    set canonical_url = excluded.canonical_url
+                    returning id
+                    """,
+                    ("https://soundcloud.com/syco23/task-2",),
+                ).fetchone()
+                cursor.execute(
+                    """
+                    insert into set_provider_items (
+                        set_id, provider_item_id, relationship, is_primary
+                    ) values (%s, %s, 'source', true)
+                    on conflict (set_id, provider_item_id, relationship)
+                    do update set is_primary = true
+                    """,
+                    (set_id, provider_item["id"]),
+                )
                 cursor.execute(
                     "insert into auth.users (id) values (%s) on conflict do nothing",
                     (user_id,),
