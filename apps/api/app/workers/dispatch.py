@@ -1,4 +1,5 @@
 from app.schemas.import_job import ImportJob, JobType
+from app.workers.celery_app import celery_app
 from app.workers.provider_routing import dispatch_job
 
 
