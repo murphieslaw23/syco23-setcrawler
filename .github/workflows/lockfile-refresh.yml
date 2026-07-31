@@ -1,0 +1,33 @@
+name: lockfile-refresh
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  refresh-web-lockfile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Regenerate npm lockfile
+        working-directory: apps/web
+        run: npm install --package-lock-only --ignore-scripts
+      - name: Verify clean install contract
+        working-directory: apps/web
+        run: npm ci --ignore-scripts
+      - name: Upload regenerated lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-package-lock
+          path: apps/web/package-lock.json
+          if-no-files-found: error
+          retention-days: 1
