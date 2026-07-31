@@ -1,15 +1,3 @@
-declare module 'nuxt/schema' {
-  interface AppConfigInput {
-    sycoRuntime?: {
-      apiBase: string
-      runtimeMode: string
-      localRole: string
-      supabaseUrl: string
-      supabaseAnonKey: string
-    } | null
-  }
-}
-
 const isVercelBuild = process.env.VERCEL === '1' || Boolean(process.env.VERCEL_ENV)
 
 const approvedProductionRuntime = {
@@ -25,7 +13,10 @@ export default defineNuxtConfig({
   devtools: { enabled: false },
   css: ['~/assets/app.css'],
   appConfig: {
-    sycoRuntime: isVercelBuild ? approvedProductionRuntime : null
+    sycoRuntime: {
+      enabled: isVercelBuild,
+      ...approvedProductionRuntime
+    }
   },
   runtimeConfig: {
     public: {
