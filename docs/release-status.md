@@ -16,7 +16,7 @@ the actual production recovery evidence before it is closed.
 |---|---:|---|
 | Dedicated Supabase project and migrations | #2 | Dedicated project, ordered migrations, private image buckets, and admin-role provisioning are recorded. |
 | Backend deployment topology | #4 | Production Compose, Caddy edge, persistent Redis AOF, isolated API/workers, and non-destructive rollback procedures are checked into the repository. |
-| CI workflow definition | #12 | API and web jobs contain the intended PostgreSQL, Redis, migration, test, typecheck, and build steps. |
+| CI runner and workflow | #12 | Run `30599334190` passed API and web on exact head `ef13879ff07f52a176d95caa9fe2b214125f5fe1`, including migrations, tests, typecheck, and build. |
 
 Prepared artifacts are not equivalent to a passed release gate. Live execution
 evidence is required below.
@@ -25,7 +25,7 @@ evidence is required below.
 
 | Gate | GitHub issue | Required evidence | State |
 |---|---:|---|---|
-| CI runner | #12 | GitHub-hosted API and web jobs start, execute their first steps, and pass on the exact release commit. | Blocked: recent jobs fail before step execution. |
+| CI runner | #12 | GitHub-hosted API and web jobs start, execute their first steps, and pass on the exact release commit. | Verified by run `30599334190`. |
 | JWT role matrix | #2 | Real Supabase JWT checks prove viewer, editor, and admin authorization through `/auth/me` and representative protected routes. | Pending. |
 | Provider smoke | #5 | Sanitized metadata-only YouTube, SoundCloud, and permitted FTM smoke results, including duplicate and below-threshold behavior. | Pending. |
 | Observability | #6 | Correlated API/worker/beat logs, health coverage, dead-letter and stale-job alerts, retention, redaction, SLOs, and release runbook evidence. | Pending. |
