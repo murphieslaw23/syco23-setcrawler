@@ -16,8 +16,8 @@ from app.services.provider import (
     ProviderPayloadError,
     ProviderQuotaError,
     ProviderTemporaryError,
+    get_provider_registry,
 )
-from app.services.youtube import YouTubeAdapter
 from app.workers.celery_app import celery_app
 from app.workers.normalize_worker import (
     _record_retry,
@@ -27,8 +27,8 @@ from app.workers.process_dispatch import dispatch_process_payload
 from app.workers.recovery import claim_or_reschedule
 
 
-def get_youtube_adapter() -> YouTubeAdapter:
-    return YouTubeAdapter()
+def get_youtube_adapter() -> object:
+    return get_provider_registry().adapter("youtube")
 
 
 _COUNT_KEYS = (

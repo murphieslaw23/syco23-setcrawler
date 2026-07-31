@@ -87,7 +87,7 @@ services:
       timeout: 5s
       retries: 12
 
-  worker-youtube:
+  worker-provider-api:
     <<: *worker-base
     command:
       - celery
@@ -95,11 +95,11 @@ services:
       - app.workers.celery_app:celery_app
       - worker
       - -Q
-      - youtube
+      - provider-api,youtube
       - --concurrency=1
       - --loglevel=INFO
 
-  worker-soundcloud:
+  worker-provider-scrape:
     <<: *worker-base
     command:
       - celery
@@ -107,23 +107,11 @@ services:
       - app.workers.celery_app:celery_app
       - worker
       - -Q
-      - soundcloud
+      - provider-scrape,soundcloud,ftm
       - --concurrency=1
       - --loglevel=INFO
     cpus: 1.0
     mem_limit: 512m
-
-  worker-ftm:
-    <<: *worker-base
-    command:
-      - celery
-      - -A
-      - app.workers.celery_app:celery_app
-      - worker
-      - -Q
-      - ftm
-      - --concurrency=1
-      - --loglevel=INFO
 
   worker-process:
     <<: *worker-base

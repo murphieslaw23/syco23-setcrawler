@@ -14,6 +14,7 @@ from app.services.provider_contracts import (
 
 _PROVIDER_KEY = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 _SETTING_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
+_TASK_NAME = re.compile(r"^app(?:\.[a-zA-Z_][a-zA-Z0-9_]*)+$")
 _CAPABILITY_METHODS: Mapping[ProviderCapability, tuple[str, ...]] = MappingProxyType(
     {
         ProviderCapability.discovery: ("discover",),
@@ -85,11 +86,9 @@ def _descriptor_problems(descriptor: ProviderDescriptor) -> list[str]:
         if isinstance(capability, ProviderCapability)
     }
     invalid_capabilities = sorted(
-        (
-            str(capability)
-            for capability in descriptor.capabilities
-            if not isinstance(capability, ProviderCapability)
-        )
+        str(capability)
+        for capability in descriptor.capabilities
+        if not isinstance(capability, ProviderCapability)
     )
     for capability in invalid_capabilities:
         problems.append(f"provider {label}: unknown capability declaration {capability}")
@@ -118,6 +117,22 @@ def _descriptor_problems(descriptor: ProviderDescriptor) -> list[str]:
         if workload is ProviderWorkload.audio and capability not in _AUDIO_CAPABILITIES:
             problems.append(
                 f"provider {label}: metadata capability {capability.value} cannot use audio workload"
+            )
+
+    for capability, task_name in sorted(
+        descriptor.task_by_capability.items(),
+        key=lambda item: str(item[0]),
+    ):
+        if not isinstance(capability, ProviderCapability):
+            problems.append(f"provider {label}: unknown capability in task mapping")
+            continue
+        if capability not in valid_capabilities:
+            problems.append(
+                f"provider {label}: task declared for absent capability {capability.value}"
+            )
+        if not isinstance(task_name, str) or _TASK_NAME.fullmatch(task_name) is None:
+            problems.append(
+                f"provider {label}: invalid task name for {capability.value}"
             )
 
     patterns: list[str] = []
@@ -221,9 +236,7 @@ class ProviderRegistry:
             try:
                 adapter = descriptor.adapter_factory()
             except Exception:
-                problems.append(
-                    f"provider {descriptor.key}: adapter factory failed"
-                )
+                problems.append(f"provider {descriptor.key}: adapter factory failed")
                 continue
             adapters[descriptor.key] = adapter
             problems.extend(_adapter_problems(descriptor, adapter))

@@ -5,11 +5,11 @@ from uuid import UUID
 from app.core.config import get_settings
 from app.repositories.base import Repository
 from app.schemas.import_job import ImportJobPatch, JobStatus
-from app.services.ftm import FTMAdapter
 from app.services.provider import (
     ProviderBlockedError,
     ProviderError,
     ProviderTemporaryError,
+    get_provider_registry,
 )
 from app.workers.celery_app import celery_app
 from app.workers.normalize_worker import _record_retry, get_worker_repository
@@ -17,8 +17,8 @@ from app.workers.process_dispatch import dispatch_process_payload
 from app.workers.recovery import claim_or_reschedule
 
 
-def get_ftm_adapter() -> FTMAdapter:
-    return FTMAdapter()
+def get_ftm_adapter() -> object:
+    return get_provider_registry().adapter("ftm")
 
 
 def _transition_terminal(
