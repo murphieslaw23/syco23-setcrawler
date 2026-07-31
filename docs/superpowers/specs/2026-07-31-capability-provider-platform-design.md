@@ -1,261 +1,221 @@
 # SYCO23 SETCRAWLER v0.3 capability-based provider platform
 
-**Status:** Approved design
-
-**Date:** 2026-07-31
-
-**Owning issue:** #19
-
-**Base release:** v0.2.1 repository baseline merged by PR #29
+**Status:** Approved design  
+**Date:** 2026-07-31  
+**Owning issue:** #19  
+**Base:** v0.2.1 baseline merged by PR #29
 
 ## 1. Purpose
 
-v0.3 replaces the closed provider enum, provider-specific routing, and single-source assumptions with an extensible provider platform. The release must preserve the current API and editorial behavior while creating the stable contracts needed for Archive.org, Mixcloud, Audius, RSS, canonical multi-source sets, and later rights-aware audio ingestion.
+v0.3 replaces the closed provider enum, provider-specific dispatch, and single-source assumptions with an extensible provider platform. It preserves the current API and editorial behavior while establishing the contracts needed for Archive.org, Mixcloud, Audius, RSS, canonical multi-source sets, and later rights-aware audio ingestion.
 
-The migration is additive. Existing `sets.source` and `sets.source_id` fields remain readable and writable during v0.3. New provider tables and links become the authoritative extension point, but removal of legacy source fields is deferred until downstream releases have migrated.
+The migration is additive. Existing `sets.source` and `sets.source_id` fields remain required compatibility projections throughout v0.3. New provider tables and links become the extension point, but legacy fields are not removed in this release.
 
 ## 2. Goals
 
 v0.3 must:
 
-1. Define explicit provider capabilities for discovery, metadata, embeds, authorized audio, creator uploads, syndication, and license evidence.
-2. Register providers through validated descriptors rather than a closed source enum or provider-specific conditionals.
-3. Store provider identity and provider items independently from canonical set records.
-4. Backfill every existing set with exactly one source link without changing its public identity or review state.
-5. Dual-write legacy source fields and new provider links for all existing import paths.
-6. Route work by workload class rather than provider name.
-7. Migrate YouTube, SoundCloud, and freeteknomusic.org adapters into the registry.
-8. Make provider health and search-profile behavior descriptor-driven.
-9. Preserve the no-auto-publish invariant and all current acquisition restrictions.
-10. Keep the full API, migration, durable-job, provider fixture, web test, typecheck, and production-build suites green.
+1. Define capabilities for discovery, metadata, embeds, authorized audio, creator uploads, syndication, and license evidence.
+2. Register providers through validated descriptors rather than a closed enum or central provider conditionals.
+3. Separate provider identity and provider items from canonical set records.
+4. Backfill every existing set with exactly one primary source link without changing its identity, score, or review state.
+5. Dual-write legacy source fields and provider source links for every current import path.
+6. Route jobs by workload class rather than provider name.
+7. Migrate YouTube, SoundCloud, and freeteknomusic.org to the registry.
+8. Make provider health and search-profile validation descriptor-driven.
+9. Preserve manual publication, rights approval, and all current acquisition restrictions.
+10. Keep the complete API and web CI gates green.
 
 ## 3. Non-goals
 
 v0.3 does not:
 
 - add Archive.org, Mixcloud, Audius, or RSS adapters;
-- enable media acquisition, stream ripping, audio downloads, MinIO writes, derivatives, or playback;
-- automatically merge duplicate sets;
+- enable downloads, stream ripping, MinIO writes, derivatives, playback, or any audio acquisition;
+- automatically merge duplicates;
 - remove `sets.source` or `sets.source_id`;
-- introduce Chromaprint or other audio fingerprinting;
-- change manual rights approval or publication policy;
-- change the public archive information architecture;
-- complete production JWT, provider-credential, recovery, or observability evidence still tracked under the v0.2.1 operational gates.
+- add audio fingerprinting;
+- change publication policy;
+- complete the remaining production-evidence gates tracked separately under v0.2.1.
 
-## 4. Chosen migration strategy
+## 4. Chosen strategy
 
 ### 4.1 Additive schema and dual-write
 
-The release uses an additive migration with a compatibility interval.
+New source relationships are written to `providers`, `provider_items`, and `set_provider_items`. Legacy fields remain populated. Repository code resolves the primary provider link first and verifies that the legacy projection agrees with it.
 
-- New source relationships are written to `providers`, `provider_items`, and `set_provider_items`.
-- Legacy `sets.source` and `sets.source_id` remain populated.
-- Reads may continue to use legacy fields where API compatibility requires it.
-- New provider-platform code reads through repository interfaces that can resolve the linked provider item first and fall back to legacy fields during migration.
-- A database backfill creates exactly one provider-item link for every existing set with a valid legacy source pair.
+A mismatch is an integrity error. Mutation paths fail rather than silently choosing one representation. Read-only diagnostics may report the mismatch in sanitized health output.
 
-This strategy is preferred over an immediate cutover because it provides deterministic rollback, limits the blast radius, and allows compatibility checks to compare old and new representations.
+This strategy is preferred because it supports deterministic rollback to v0.2 application code without dropping new tables or reconstructing legacy fields.
 
 ### 4.2 Authority during v0.3
 
-During v0.3:
+- Provider descriptors in application code are authoritative for behavior, capabilities, adapter construction, configuration shape, URL matching, and workload routing.
+- The `providers.enabled` database flag is an operational kill switch.
+- A provider is effectively enabled only when it is registered in code, enabled in the database, and has complete required configuration.
+- `provider_items` is authoritative for provider-specific identity and normalized source metadata.
+- `set_provider_items` is authoritative for set-to-source relationships.
+- `sets.source` and `sets.source_id` remain mandatory compatibility projections.
+- Publication state remains authoritative on the canonical set record.
 
-- the registry is authoritative for provider behavior and capabilities;
-- `provider_items` is authoritative for provider-specific identity and normalized source metadata;
-- `set_provider_items` is authoritative for relationships between sets and external sources;
-- legacy source fields remain a required compatibility projection;
-- publication state remains authoritative on the canonical set record.
+Database rows never identify arbitrary executable classes and never store secret values.
 
-Conflicting legacy and linked source data is an integrity error. It must be surfaced by tests, health diagnostics, or operator-visible validation rather than silently reconciled.
+## 5. Capability model
 
-## 5. Provider capability model
+The capability vocabulary is fixed for v0.3:
 
-### 5.1 Capability identifiers
-
-The initial capability vocabulary is:
-
-- `discovery`: enumerate or search provider content through a permitted interface;
-- `metadata`: fetch normalized metadata for a known provider item or URL;
-- `embed`: expose an externally hosted, provider-approved embed or canonical playback URL;
-- `authorized_audio`: acquire audio only when a rights-aware adapter can prove the operation is permitted;
-- `creator_upload`: accept media supplied directly by an authenticated rights holder;
+- `discovery`: enumerate or search permitted provider content;
+- `metadata`: fetch normalized metadata for a known item or URL;
+- `embed`: expose a provider-approved external embed or playback URL;
+- `authorized_audio`: acquire audio only after an explicit rights decision;
+- `creator_upload`: accept media supplied by an authenticated rights holder;
 - `syndication`: consume feed-style publication such as RSS or Atom;
-- `license_evidence`: return source-derived evidence relevant to rights review.
+- `license_evidence`: return source-derived evidence for rights review.
 
-Capabilities are declarative. A provider advertising a capability must supply the corresponding adapter interface and tests.
+Capabilities are declarative contracts. Advertising a capability requires the matching adapter interface and tests.
 
-### 5.2 Capability safety rules
-
-Registry validation must reject:
+Registry validation rejects:
 
 - duplicate provider keys;
-- unknown capability names;
-- a capability without its required adapter method;
-- an adapter method exposed without the corresponding declared capability;
-- `authorized_audio` without an explicit rights-decision function and a deny-by-default path;
-- `creator_upload` without authenticated ownership and license-evidence contracts;
+- unknown capabilities;
+- missing adapter methods for declared capabilities;
+- capability methods not declared by the descriptor;
+- ambiguous URL matchers;
 - unsupported workload classes;
-- an enabled provider without a usable adapter factory;
-- configuration schemas that expose secrets in public descriptor output.
+- enabled providers without adapter factories;
+- public descriptor output containing secret values;
+- `authorized_audio` without a deny-by-default rights-decision method;
+- `creator_upload` without authenticated ownership and license-evidence contracts.
 
-No current provider declares `authorized_audio` or `creator_upload` in v0.3.
+No v0.3 provider declares `authorized_audio` or `creator_upload`.
 
 ## 6. Provider descriptor and registry
 
-### 6.1 Descriptor contract
+Each descriptor contains:
 
-Each provider descriptor contains:
-
-- stable lowercase `key` suitable for database and job payloads;
-- human-readable `display_name`;
-- immutable provider identity metadata;
-- declared capability set;
-- workload class for each executable capability;
-- adapter factory or adapter implementation reference;
+- stable lowercase `key`;
+- `display_name`;
+- capability set;
+- capability-to-workload mapping;
+- adapter factory;
 - health-check definition;
-- configuration schema containing secret names but never secret values;
-- source URL matching rules;
+- configuration schema containing variable names and validation rules, never values;
+- URL matchers;
 - optional search-profile schema;
-- enabled-by-default flag;
-- operational limits such as request timeout, output limit, and concurrency class.
+- enabled-by-default value used only when the provider row is first created;
+- timeout, output-size, and concurrency limits.
 
-Provider descriptors are application code. Database rows mirror operational identity and selected public metadata but do not dynamically load arbitrary executable classes.
+The registry is constructed during API and worker startup:
 
-### 6.2 Registry lifecycle
+1. import built-in descriptors;
+2. validate each descriptor;
+3. validate global key and URL-matcher uniqueness;
+4. synchronize provider rows idempotently without overwriting an existing operational `enabled` choice;
+5. instantiate effectively enabled adapters;
+6. expose an immutable registry;
+7. fail startup with a concise validation error if any invariant is broken.
 
-The registry is constructed once during API and worker startup.
+Tests may construct isolated registries. Adding a fixture provider must require descriptor registration and tests only, with no source-enum or central dispatch edits.
 
-Startup sequence:
+Initial descriptors are conservative:
 
-1. import built-in provider descriptors;
-2. validate each descriptor independently;
-3. validate cross-provider uniqueness and URL matcher ambiguity;
-4. instantiate only enabled adapters;
-5. expose an immutable registry to services, routes, schedulers, and workers;
-6. fail startup with a concise validation error if any invariant is broken.
-
-Tests may construct isolated registries with fixture providers. Adding a fixture provider must require only descriptor registration and tests, not edits to an enum or central `if/elif` dispatch block.
-
-### 6.3 Initial descriptors
-
-Initial provider capabilities are intentionally conservative:
-
-- **YouTube:** `discovery`, `metadata`, `embed`; workload class `provider-api`.
-- **SoundCloud:** `metadata`, `embed`; workload class `provider-scrape` for the isolated metadata extractor. No stream ripping or download capability.
-- **freeteknomusic.org:** `discovery`, `metadata`, `license_evidence`; workload class `provider-scrape`.
-
-Capability declarations must reflect implemented and legally permitted behavior, not theoretical provider features.
+- **YouTube** (`youtube`): `discovery`, `metadata`, `embed`; workload `provider-api`.
+- **SoundCloud** (`soundcloud`): `metadata`, `embed`; workload `provider-scrape`; no download behavior.
+- **freeteknomusic.org** (`ftm`): `discovery`, `metadata`, `license_evidence`; workload `provider-scrape`.
 
 ## 7. Data model
 
 ### 7.1 `providers`
 
-Purpose: stable identity and operational metadata for each registered provider.
+Required columns:
 
-Required fields:
-
-- `id` UUID primary key;
-- `key` text, unique, immutable after creation;
-- `display_name` text;
-- `capabilities` JSONB or text array with a database-level shape check;
-- `enabled` boolean;
-- `workload_policy` JSONB containing capability-to-workload mappings;
-- `descriptor_version` integer;
+- `id uuid primary key`;
+- `key text not null unique`;
+- `display_name text not null`;
+- `capabilities text[] not null` with a check that every value belongs to the fixed vocabulary;
+- `enabled boolean not null`;
+- `workload_policy jsonb not null` containing capability-to-workload mappings;
+- `descriptor_version integer not null`;
 - `created_at` and `updated_at` timestamps.
 
-The application synchronizes built-in descriptors to provider rows idempotently. Secret values are never stored in this table.
+Provider keys are immutable after insertion. Secrets are prohibited.
 
 ### 7.2 `provider_items`
 
-Purpose: represent one externally addressable object at one provider independently from a canonical SETCRAWLER set.
+Required columns:
 
-Required fields:
-
-- `id` UUID primary key;
-- `provider_id` foreign key to `providers`;
-- `external_id` text;
-- `canonical_url` text;
-- `item_type` text, initially `set_candidate` unless a provider supplies a more precise supported type;
-- `title` text nullable;
-- `published_at` timestamp nullable;
-- `duration_seconds` integer nullable with non-negative check;
-- `embed_url` text nullable;
-- `raw_metadata` JSONB containing sanitized provider metadata;
-- `metadata_fetched_at` timestamp nullable;
+- `id uuid primary key`;
+- `provider_id uuid not null references providers(id)`;
+- `external_id text not null`;
+- `canonical_url text not null`;
+- `item_type text not null default 'set_candidate'`;
+- nullable normalized `title`, `published_at`, `duration_seconds`, and `embed_url`;
+- `raw_metadata jsonb not null default '{}'`, sanitized before persistence;
+- nullable `metadata_fetched_at`;
 - `created_at` and `updated_at` timestamps.
 
-Uniqueness is enforced on `(provider_id, external_id)`. Canonical URL indexes support URL-based lookup, but URLs are not assumed immutable or globally unique.
+Constraints:
+
+- unique `(provider_id, external_id)`;
+- non-negative duration when present;
+- bounded non-empty external IDs and URLs;
+- canonical URL index for lookup, without treating URLs as immutable identity.
 
 ### 7.3 `set_provider_items`
 
-Purpose: relate a canonical set to one or more provider items.
+Required columns:
 
-Required fields:
+- `set_id uuid not null references sets(id)`;
+- `provider_item_id uuid not null references provider_items(id)`;
+- `relationship text not null default 'source'`;
+- `is_primary boolean not null default false`;
+- `created_at` timestamp.
 
-- `set_id` foreign key to `sets`;
-- `provider_item_id` foreign key to `provider_items`;
-- `relationship` text, initially `source`;
-- `is_primary` boolean;
-- `created_at` timestamp;
-- composite primary key or unique constraint on `(set_id, provider_item_id, relationship)`.
+Constraints:
 
-v0.3 enforces at most one primary source link per set. It does not prevent future secondary links needed by v0.5. Existing sets receive exactly one primary `source` link during backfill.
+- unique `(set_id, provider_item_id, relationship)`;
+- partial unique index on `set_id` where `relationship = 'source' and is_primary`;
+- v0.3 backfill creates exactly one primary source per existing set;
+- secondary source links remain structurally possible for v0.5 but are not created automatically in v0.3.
 
-### 7.4 Row-level security
+### 7.4 RLS and exposure
 
-RLS must preserve current visibility rules:
-
-- public users may see provider information linked to published sets only through approved API projections;
-- editor roles may read source links required for review;
-- administrators may maintain provider records and source relationships;
-- direct public writes are denied;
-- service-role operations remain server-side only.
-
-Raw provider metadata must not be exposed wholesale through public endpoints.
+- Public users receive provider data only through approved projections linked to published sets.
+- Editors can read source links needed for review.
+- Administrators can maintain provider rows and relationships.
+- Direct public writes are denied.
+- Service-role operations remain server-side.
+- Raw provider metadata is never exposed wholesale through public endpoints.
 
 ## 8. Migration and backfill
 
-### 8.1 Migration ordering
-
-The migration sequence is:
+The migration order is fixed:
 
 1. create tables, constraints, indexes, and RLS policies;
-2. insert or synchronize built-in provider rows for YouTube, SoundCloud, and FTM;
-3. backfill provider items from every valid `(sets.source, sets.source_id)` pair;
-4. create exactly one primary `set_provider_items` link per existing set;
-5. run integrity assertions that abort the migration on missing or duplicate links;
-6. leave legacy fields unchanged.
+2. insert `youtube`, `soundcloud`, and `ftm` provider rows;
+3. create a migration-local `legacy_provider_keys` mapping using explicit accepted legacy values and aliases already present in the v0.2 enum;
+4. assert that every non-null legacy source maps to exactly one provider key;
+5. upsert provider items from `(sets.source, sets.source_id)`;
+6. create one primary source link per set;
+7. assert that every existing set has exactly one primary source link and that it resolves back to the same legacy source pair;
+8. leave legacy fields unchanged.
 
-### 8.2 Backfill mapping
+Unknown legacy sources abort the migration. They are never coerced to a generic provider.
 
-Legacy source values are mapped through an explicit migration mapping table or deterministic SQL expression. Unknown legacy values abort the migration instead of being coerced into a generic provider.
+Migration tests must prove:
 
-For each existing set:
+- clean-database application;
+- application over representative v0.2 data;
+- one primary source per existing set;
+- provider-item uniqueness;
+- failure on unknown legacy sources;
+- idempotent provider synchronization;
+- unchanged legacy fields;
+- deterministic execution with all earlier migrations.
 
-- resolve the provider row from `sets.source`;
-- upsert a provider item by `(provider_id, sets.source_id)`;
-- copy the canonical URL and safe normalized metadata already present on the set where available;
-- insert one primary source relationship;
-- verify the relationship resolves back to the same legacy provider key and external ID.
+## 9. Normalized provider item and dual-write
 
-### 8.3 Migration contracts
-
-Automated tests must prove:
-
-- the migration applies to an empty database;
-- the migration applies to a representative v0.2 dataset;
-- every existing set has exactly one primary source link after backfill;
-- no provider item is duplicated for the same provider and external ID;
-- unknown legacy sources fail loudly;
-- rerunning idempotent synchronization does not create duplicates;
-- legacy fields are unchanged;
-- all prior migrations still apply in deterministic filename order.
-
-## 9. Repository and service behavior
-
-### 9.1 Normalized provider item
-
-Adapters return a provider-neutral value object containing:
+Adapters return a metadata-only value object containing:
 
 - provider key;
 - external ID;
@@ -263,76 +223,67 @@ Adapters return a provider-neutral value object containing:
 - normalized title, publication time, duration, creator/channel metadata, and artwork candidates;
 - optional embed URL;
 - sanitized raw metadata;
-- provenance and license-evidence fields where declared;
+- provenance and license evidence when declared;
 - deterministic deduplication inputs.
 
-The object contains metadata only in v0.3. It cannot contain downloaded media bytes or local media paths.
+It cannot contain downloaded media bytes or local media paths.
 
-### 9.2 Dual-write transaction
+Creating or updating a set from an import performs one transaction:
 
-Creating or updating a set from a provider import must perform, in one database transaction where supported:
+1. resolve descriptor and provider row;
+2. upsert provider item;
+3. create or update canonical set;
+4. write primary source relationship;
+5. write legacy `source` and `source_id`;
+6. assert both representations agree;
+7. commit.
 
-1. resolve the provider descriptor and provider row;
-2. upsert the provider item;
-3. create or update the canonical set;
-4. write the primary source relationship;
-5. write the legacy `source` and `source_id` compatibility projection;
-6. assert that both representations agree before commit.
+Any failure rolls back the transaction. Existing durable-job retry, dead-letter, stale-claim, redrive, and idempotency semantics remain in force.
 
-If any step fails, the job remains retryable under the existing durable-job rules. Partial source relationships must not be committed.
+Existing API response fields do not change in v0.3.
 
-### 9.3 Read compatibility
-
-Existing API response fields remain unchanged in v0.3. Internally, repositories may derive the response source fields from the primary provider link and compare them to legacy values. Any mismatch is logged as an integrity event and returned as a controlled server error for mutation paths rather than silently overwriting data.
-
-## 10. Workload-based routing
-
-### 10.1 Workload classes
+## 10. Workload routing
 
 The queue vocabulary becomes:
 
-- `provider-api`: rate-limited provider APIs and structured remote metadata calls;
-- `provider-scrape`: isolated HTML or command-based metadata extraction with strict time and output limits;
+- `provider-api`: rate-limited structured provider API calls;
+- `provider-scrape`: isolated HTML or command-based metadata extraction with strict limits;
 - `process`: normalization, scoring, candidate extraction, deduplication, and image metadata processing;
-- `audio`: reserved for future authorized media work; no v0.3 task may enqueue it.
+- `audio`: reserved for later authorized media work; no v0.3 code may enqueue it.
 
-Provider descriptors map capabilities to workload classes. Jobs contain provider key, capability, operation, and normalized arguments; the worker resolves the adapter from the registry.
+Jobs contain provider key, capability, operation, and normalized arguments. Workers resolve adapters through the registry.
 
-### 10.2 Compatibility and rollout
+Provider-specific queue names may remain temporary aliases for one deployment compatibility window. New enqueue and scheduler code targets workload queues. Workers can listen to old and new names during that window; removal of aliases is a separate cleanup after production verification.
 
-Provider-specific queue names may remain as temporary aliases during deployment. New scheduler and enqueue code targets workload queues. Workers may listen to both old and new names for one compatibility window, after which provider-specific aliases can be removed in a separate cleanup change.
+## 11. Generic scheduling
 
-Existing durable claim, retry, dead-letter, stale-job, redrive, and idempotency semantics remain unchanged.
+Search profiles reference provider key plus a descriptor-defined operation. The scheduler:
 
-### 10.3 Generic scheduling
-
-Search profiles reference provider key and a descriptor-defined operation. The scheduler:
-
-1. loads enabled profiles due for execution;
-2. resolves the provider and verifies `discovery` capability;
-3. validates profile parameters against the descriptor schema;
-4. creates a durable job with the appropriate workload class;
+1. loads due enabled profiles;
+2. resolves the provider and verifies `discovery`;
+3. validates parameters against the descriptor schema;
+4. creates a durable job on the mapped workload queue;
 5. advances schedule state only after durable job creation succeeds.
 
 Provider-specific cron branches are prohibited.
 
-## 11. Health and operator surfaces
+## 12. Health and operator behavior
 
-Provider health output is generated from descriptors and runtime state. It includes:
+Provider health is generated from descriptors and runtime state. It reports:
 
-- provider key and display name;
-- enabled state;
-- declared capabilities;
-- configuration completeness without revealing secret values;
-- last successful and failed operation timestamps where available;
-- workload class;
-- degraded or unavailable status with sanitized reason.
+- key and display name;
+- effective and database enabled states;
+- capabilities;
+- configuration completeness without values;
+- workload mappings;
+- sanitized degraded or unavailable reason;
+- last successful and failed operation timestamps when available.
 
-Search-profile forms and validation use descriptor schemas. The existing UI remains compatible for current providers; generic rendering may be introduced incrementally, but provider-specific UI logic must not expand.
+Search-profile validation and forms consume descriptor schemas. Existing current-provider UI remains compatible. Provider-specific UI branches must not expand.
 
-## 12. Failure handling
+## 13. Error handling
 
-The platform distinguishes:
+Normalized error categories are:
 
 - `provider_not_registered`;
 - `provider_disabled`;
@@ -344,142 +295,107 @@ The platform distinguishes:
 - `source_integrity_mismatch`;
 - `rights_not_permitted`.
 
-Errors are normalized before durable-job classification. Retryability depends on category, not provider-specific string matching. Validation, rights denial, and integrity mismatch are non-retryable until configuration or data changes. Rate limits and transient provider failures use bounded retry policies with jitter.
+Retryability is category-based, not provider-string-based. Validation, rights denial, and integrity mismatch are non-retryable until configuration or data changes. Rate limits and transient provider failures use bounded retries with jitter.
 
-Logs and job results must redact credentials, bearer tokens, cookies, database URLs, private payloads, and command output beyond configured limits.
+Logs and job results redact credentials, tokens, cookies, database URLs, private payloads, and command output beyond configured limits.
 
-## 13. Security and rights invariants
+## 14. Security and rights invariants
 
-- Registry descriptors contain secret identifiers only, never values.
-- Provider URLs and external IDs are validated and length-bounded.
-- Scrape-style adapters execute in the existing isolated environment with timeout and output limits.
+- Descriptors identify secret variables but never contain values.
+- URLs and external IDs are validated and bounded.
+- Scrape adapters remain isolated with time and output limits.
 - Raw metadata is sanitized before persistence.
-- No provider in v0.3 may expose audio acquisition methods.
-- Any future `authorized_audio` implementation must be deny-by-default and require explicit rights evidence.
+- No v0.3 provider exposes media acquisition.
+- Future authorized audio remains deny-by-default and requires explicit evidence.
 - Publication remains a separate manual editorial action.
-- Duplicate detection remains advisory; no automatic merge is introduced.
+- Duplicate detection remains advisory; automatic merge is prohibited.
 
-## 14. Testing strategy
+## 15. Testing strategy
 
-### 14.1 Unit and contract tests
+Unit and contract tests cover:
 
-Tests cover:
-
-- descriptor validation and invalid capability combinations;
-- duplicate keys and ambiguous URL matchers;
-- fixture-provider registration without core enum edits;
-- adapter capability conformance;
+- descriptor validation and capability conformance;
+- duplicate keys and ambiguous matchers;
+- fixture-provider extension without core dispatch edits;
 - workload routing;
-- normalized error mapping;
+- normalized errors;
 - dual-write consistency;
-- descriptor-driven health and search-profile validation;
-- prohibition of audio capability and audio queue usage in v0.3.
-
-### 14.2 Integration tests
+- descriptor-driven health and profile validation;
+- prohibition of audio capability and audio queue use.
 
 PostgreSQL integration tests cover:
 
-- schema migration and backfill;
-- provider/item/link uniqueness;
-- transaction rollback on partial dual-write failure;
-- repository reads through provider links with legacy projection;
-- durable job retries and idempotency under workload routing;
+- migration and backfill;
+- uniqueness and primary-source constraints;
+- rollback on partial dual-write failure;
+- linked-source reads with legacy projection;
+- durable-job idempotency under workload routing;
 - RLS and public projection boundaries.
 
-### 14.3 Existing regression suites
+Every implementation PR must also pass:
 
-The following must remain green on every implementation PR:
-
-- all existing provider fixture tests;
-- durable job, retry, dead-letter, stale claim, and redrive tests;
-- complete API pytest suite against PostgreSQL and Redis;
-- Python compileall;
-- complete web Vitest suite;
+- existing provider fixture tests;
+- durable job, retry, dead-letter, stale-claim, and redrive tests;
+- full API pytest against PostgreSQL and Redis;
+- Python `compileall`;
+- full web Vitest suite;
 - Nuxt typecheck;
 - Nuxt production build.
 
-## 15. Rollout and rollback
+## 16. Rollout and rollback
 
-### 15.1 Rollout
+Implementation lands in five bounded PRs:
 
-Implementation lands in five bounded slices:
-
-1. provider capability contracts and registry;
-2. additive schema and deterministic backfill;
-3. repository dual-write and API compatibility;
-4. existing adapter migration and workload routing;
+1. registry foundation;
+2. additive provider-source schema and backfill;
+3. transactional dual-write and API compatibility;
+4. adapter and workload-queue migration;
 5. descriptor-driven health, search profiles, and generic scheduling.
 
-Each slice is independently testable and must not enable unfinished runtime behavior.
+Schema deployment order:
 
-### 15.2 Deployment order
-
-For schema-bearing slices:
-
-1. deploy additive migration;
+1. apply additive migration;
 2. verify backfill counts and integrity queries;
-3. deploy dual-write-capable API and workers;
-4. verify jobs create matching legacy and linked sources;
-5. switch scheduler enqueue targets to workload queues;
-6. retain temporary queue aliases through the compatibility window.
+3. deploy dual-write API and workers;
+4. verify matching legacy and linked sources;
+5. switch scheduler enqueue targets;
+6. retain queue aliases through the compatibility window.
 
-### 15.3 Rollback
+Application rollback returns to the previous image while leaving additive tables intact. It must not drop provider tables, delete source links, truncate jobs, remove PostgreSQL history, or remove Redis AOF data. After production writes use the new tables, corrective forward migrations are preferred over destructive schema rollback.
 
-Application rollback returns to the previous image while leaving additive tables intact. Legacy fields continue to support v0.2 code. Rollback must not drop provider tables, delete provider links, truncate jobs, remove PostgreSQL history, or remove Redis AOF data.
-
-A schema rollback is not part of the normal recovery path. Corrective forward migrations are preferred after any production write has used the new tables.
-
-## 16. Pull-request boundaries
+## 17. Pull-request boundaries
 
 ### PR 1 — Registry foundation
 
-- capability vocabulary and typed contracts;
-- descriptor and registry validation;
-- YouTube, SoundCloud, and FTM descriptors wrapping existing behavior;
-- fixture-provider extension test;
-- no schema or routing changes.
+Capability contracts, descriptors, startup validation, current-provider wrappers, and fixture-provider extension tests. No schema or routing changes.
 
 ### PR 2 — Provider source schema
 
-- `providers`, `provider_items`, `set_provider_items` migration;
-- built-in provider synchronization;
-- complete v0.2 backfill;
-- integrity and RLS tests.
+Tables, built-in rows, deterministic backfill, integrity constraints, indexes, and RLS tests.
 
 ### PR 3 — Dual-write compatibility
 
-- provider-item repository interfaces;
-- transactional dual-write;
-- legacy projection and mismatch detection;
-- API compatibility tests.
+Repository interfaces, transactional dual-write, legacy projection, mismatch detection, and API compatibility tests.
 
 ### PR 4 — Adapter and queue migration
 
-- adapter resolution through registry;
-- workload-class jobs and workers;
-- temporary queue aliases;
-- normalized error categories;
-- no `audio` tasks.
+Registry adapter resolution, workload jobs and workers, temporary queue aliases, normalized errors, and explicit prohibition of audio tasks.
 
 ### PR 5 — Descriptor-driven operations
 
-- generic scheduling;
-- descriptor-defined search-profile schemas;
-- provider health output;
-- operator-surface compatibility;
-- completion evidence for issue #19 and applicable generic scheduling work from #7.
+Generic scheduling, search-profile schemas, provider health, operator compatibility, and completion evidence for #19 plus applicable work from #7.
 
-## 17. Exit criteria
+## 18. Exit criteria
 
 v0.3 is complete only when:
 
-1. a fixture provider can be added through registration and tests without editing a closed source enum or central provider dispatch branch;
-2. all existing sets have exactly one valid backfilled primary source link;
-3. all current import paths dual-write consistent legacy and provider-link data;
-4. YouTube, SoundCloud, and FTM operate through the registry;
+1. a fixture provider is added through registration and tests without editing a closed enum or central dispatch branch;
+2. every existing set has exactly one valid backfilled primary source link;
+3. every current import path dual-writes consistent legacy and provider-link data;
+4. YouTube, SoundCloud, and FTM run through the registry;
 5. scheduler and workers route by workload class;
-6. provider health and search-profile validation are descriptor-driven;
+6. health and search-profile validation are descriptor-driven;
 7. existing API responses remain compatible;
-8. no media acquisition or audio storage behavior is enabled;
-9. all full CI gates pass on the exact release commit;
-10. rollback instructions are verified against the additive schema strategy.
+8. no media acquisition or audio storage is enabled;
+9. full CI passes on the exact release commit;
+10. rollback instructions are verified against the additive strategy.
