@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feat/v0.2.1-release-gate
+  pull_request:
   workflow_dispatch:
 
 permissions:
