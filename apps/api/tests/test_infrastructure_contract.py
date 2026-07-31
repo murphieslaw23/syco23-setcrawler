@@ -20,17 +20,13 @@ def test_compose_exposes_the_provider_worker_contract() -> None:
     compose = (ROOT / "docker-compose.yml").read_text()
 
     for worker, command in {
-        "worker-youtube": (
+        "worker-provider-api": (
             "celery -A app.workers.celery_app:celery_app worker "
-            "-Q youtube --concurrency=1 --loglevel=INFO"
+            "-Q provider-api,youtube --concurrency=1 --loglevel=INFO"
         ),
-        "worker-soundcloud": (
+        "worker-provider-scrape": (
             "celery -A app.workers.celery_app:celery_app worker "
-            "-Q soundcloud --concurrency=1 --loglevel=INFO"
-        ),
-        "worker-ftm": (
-            "celery -A app.workers.celery_app:celery_app worker "
-            "-Q ftm --concurrency=1 --loglevel=INFO"
+            "-Q provider-scrape,soundcloud,ftm --concurrency=1 --loglevel=INFO"
         ),
         "worker-process": (
             "celery -A app.workers.celery_app:celery_app worker "
@@ -60,17 +56,17 @@ def test_compose_exposes_the_provider_worker_contract() -> None:
     ):
         assert expected in api
 
-    youtube = compose.split("  worker-youtube:\n", maxsplit=1)[1].split(
-        "  worker-soundcloud:\n", maxsplit=1
+    provider_api = compose.split("  worker-provider-api:\n", maxsplit=1)[1].split(
+        "  worker-provider-scrape:\n", maxsplit=1
     )[0]
-    assert 'YOUTUBE_API_KEY: "${YOUTUBE_API_KEY:-}"' in youtube
-    assert 'PROVIDER_MODE: "${PROVIDER_MODE:-fixture}"' in youtube
+    assert 'YOUTUBE_API_KEY: "${YOUTUBE_API_KEY:-}"' in provider_api
+    assert 'PROVIDER_MODE: "${PROVIDER_MODE:-fixture}"' in provider_api
     assert (
         'PROVIDER_REQUEST_TIMEOUT_SECONDS: '
         '"${PROVIDER_REQUEST_TIMEOUT_SECONDS:-20}"'
-    ) in youtube
+    ) in provider_api
 
-    ftm = compose.split("  worker-ftm:\n", maxsplit=1)[1].split(
+    provider_scrape = compose.split("  worker-provider-scrape:\n", maxsplit=1)[1].split(
         "  worker-process:\n", maxsplit=1
     )[0]
     for expected in (
@@ -79,26 +75,20 @@ def test_compose_exposes_the_provider_worker_contract() -> None:
         'FTM_SCRAPER_ENABLED: "${FTM_SCRAPER_ENABLED:-false}"',
         'FTM_MAX_PAGES_PER_RUN: "${FTM_MAX_PAGES_PER_RUN:-25}"',
         'PROVIDER_REQUEST_TIMEOUT_SECONDS: "${PROVIDER_REQUEST_TIMEOUT_SECONDS:-20}"',
+        'PROVIDER_OUTPUT_LIMIT_BYTES: "${PROVIDER_OUTPUT_LIMIT_BYTES:-1048576}"',
         'PROVIDER_MODE: "${PROVIDER_MODE:-fixture}"',
-    ):
-        assert expected in ftm
-
-    soundcloud = compose.split("  worker-soundcloud:\n", maxsplit=1)[1].split(
-        "  worker-ftm:\n", maxsplit=1
-    )[0]
-    assert 'PROVIDER_MODE: "${PROVIDER_MODE:-fixture}"' in soundcloud
-
-    soundcloud = compose.split("  worker-soundcloud:\n", maxsplit=1)[1].split(
-        "  worker-ftm:\n", maxsplit=1
-    )[0]
-    for expected in (
+        'YT_DLP_BIN: "${YT_DLP_BIN:-yt-dlp}"',
         "read_only: true",
         "/tmp:size=64m,noexec,nosuid",
         "cpus: 1.0",
         "mem_limit: 512m",
     ):
-        assert expected in soundcloud
+        assert expected in provider_scrape
 
+    assert "worker-youtube:" not in compose
+    assert "worker-soundcloud:" not in compose
+    assert "worker-ftm:" not in compose
+    assert "-Q audio" not in compose
     assert '"3000:3000"' in compose
     assert '"8000:8000"' in compose
     init_mounts = (
@@ -153,9 +143,8 @@ def test_production_compose_keeps_state_and_secrets_on_the_backend_host() -> Non
     assert set(services) == {
         "api",
         "redis",
-        "worker-youtube",
-        "worker-soundcloud",
-        "worker-ftm",
+        "worker-provider-api",
+        "worker-provider-scrape",
         "worker-process",
         "worker-beat",
         "caddy",
@@ -184,12 +173,12 @@ def test_production_compose_keeps_state_and_secrets_on_the_backend_host() -> Non
     ]
     assert "/tmp:size=64m,noexec,nosuid" in services["worker-beat"]["tmpfs"]
     assert sum(" beat " in " ".join(service.get("command", [])) for service in services.values()) == 1
+    assert "audio" not in services
 
     backend_services = [
         "api",
-        "worker-youtube",
-        "worker-soundcloud",
-        "worker-ftm",
+        "worker-provider-api",
+        "worker-provider-scrape",
         "worker-process",
         "worker-beat",
     ]
