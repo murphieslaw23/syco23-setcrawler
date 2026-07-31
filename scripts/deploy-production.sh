@@ -59,7 +59,7 @@ printf '[deploy] validating compose configuration\n'
 compose config --quiet
 
 printf '[deploy] building immutable API and worker images\n'
-compose build --pull api worker-youtube worker-soundcloud worker-ftm worker-process worker-beat
+compose build --pull api worker-provider-api worker-provider-scrape worker-process worker-beat
 
 printf '[deploy] starting isolated SETCRAWLER services\n'
 compose up -d --remove-orphans
