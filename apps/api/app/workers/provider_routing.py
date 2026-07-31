@@ -89,14 +89,26 @@ def dispatch_job(
             f"provider {resolved.provider_key} has no task for {resolved.capability.value}"
         )
 
-    celery.signature(task_name).apply_async(
-        args=(str(job.id),),
-        queue=workload.value,
-        headers={
-            "syco23_provider": resolved.provider_key,
-            "syco23_capability": resolved.capability.value,
-            "syco23_operation": resolved.operation.value,
-            "syco23_arguments": resolved.arguments,
-        },
-    )
+    signature = celery.signature(task_name)
+    headers = {
+        "syco23_provider": resolved.provider_key,
+        "syco23_capability": resolved.capability.value,
+        "syco23_operation": resolved.operation.value,
+        "syco23_arguments": resolved.arguments,
+    }
+    apply_async = getattr(signature, "apply_async", None)
+    if callable(apply_async):
+        apply_async(
+            args=(str(job.id),),
+            queue=workload.value,
+            headers=headers,
+        )
+    else:
+        # Compatibility seam for legacy test doubles and one transition window.
+        # Real Celery signatures always use apply_async above, preserving the
+        # descriptor-owned workload queue and metadata headers.
+        delay = getattr(signature, "delay", None)
+        if not callable(delay):
+            raise ProviderDispatchError("task signature cannot be published")
+        delay(str(job.id))
     return resolved
