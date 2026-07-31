@@ -1,6 +1,8 @@
 -- v0.3 provider identity and canonical source links.
 -- This migration is additive: public.sets source/source_id remain unchanged.
 
+begin;
+
 create or replace function public.provider_capabilities_valid(value text[])
 returns boolean
 language sql
@@ -353,3 +355,5 @@ comment on table public.set_provider_items is
   'Canonical set to provider-item relationships; v0.3 backfills one primary source.';
 comment on column public.provider_items.raw_metadata is
   'Sanitized server-only provider metadata; never expose wholesale publicly.';
+
+commit;
