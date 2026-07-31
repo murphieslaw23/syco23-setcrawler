@@ -5,7 +5,7 @@ import { useSycoRuntime } from '../../composables/useSycoRuntime'
 describe('useSycoRuntime', () => {
   afterEach(() => vi.unstubAllGlobals())
 
-  it('prefers pinned app configuration over stale public runtime variables', () => {
+  it('prefers an enabled app pin over stale public runtime variables', () => {
     vi.stubGlobal('useRuntimeConfig', () => ({
       public: {
         apiBase: 'http://localhost:8000',
@@ -17,6 +17,7 @@ describe('useSycoRuntime', () => {
     }))
     vi.stubGlobal('useAppConfig', () => ({
       sycoRuntime: {
+        enabled: true,
         apiBase: 'https://api.syco23.org',
         runtimeMode: 'production',
         localRole: 'viewer',
@@ -34,7 +35,7 @@ describe('useSycoRuntime', () => {
     })
   })
 
-  it('keeps environment-driven local configuration when no app pin exists', () => {
+  it('ignores a disabled app pin and keeps environment-driven local configuration', () => {
     vi.stubGlobal('useRuntimeConfig', () => ({
       public: {
         apiBase: 'http://127.0.0.1:9000',
@@ -44,7 +45,16 @@ describe('useSycoRuntime', () => {
         supabaseAnonKey: ''
       }
     }))
-    vi.stubGlobal('useAppConfig', () => ({ sycoRuntime: null }))
+    vi.stubGlobal('useAppConfig', () => ({
+      sycoRuntime: {
+        enabled: false,
+        apiBase: 'https://api.syco23.org',
+        runtimeMode: 'production',
+        localRole: 'viewer',
+        supabaseUrl: 'https://smoevguhtsclfcmjwwhq.supabase.co',
+        supabaseAnonKey: 'production-key'
+      }
+    }))
 
     expect(useSycoRuntime()).toMatchObject({
       apiBase: 'http://127.0.0.1:9000',
