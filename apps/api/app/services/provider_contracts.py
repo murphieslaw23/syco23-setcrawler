@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -207,6 +207,9 @@ class ProviderDescriptor:
     required_settings: tuple[str, ...] = ()
     enabled_by_default: bool = True
     descriptor_version: int = 1
+    task_by_capability: Mapping[ProviderCapability, str] = field(
+        default_factory=dict
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "capabilities", frozenset(self.capabilities))
@@ -214,6 +217,11 @@ class ProviderDescriptor:
             self,
             "workload_by_capability",
             MappingProxyType(dict(self.workload_by_capability)),
+        )
+        object.__setattr__(
+            self,
+            "task_by_capability",
+            MappingProxyType(dict(self.task_by_capability)),
         )
         object.__setattr__(self, "url_matchers", tuple(self.url_matchers))
         object.__setattr__(self, "required_settings", tuple(self.required_settings))
