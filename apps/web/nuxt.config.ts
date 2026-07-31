@@ -1,3 +1,15 @@
+declare module 'nuxt/schema' {
+  interface AppConfigInput {
+    sycoRuntime?: {
+      apiBase: string
+      runtimeMode: string
+      localRole: string
+      supabaseUrl: string
+      supabaseAnonKey: string
+    } | null
+  }
+}
+
 const isVercelBuild = process.env.VERCEL === '1' || Boolean(process.env.VERCEL_ENV)
 
 const approvedProductionRuntime = {
