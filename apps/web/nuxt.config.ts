@@ -13,7 +13,10 @@ export default defineNuxtConfig({
   devtools: { enabled: false },
   css: ['~/assets/app.css'],
   appConfig: {
-    sycoRuntime: isVercelBuild ? approvedProductionRuntime : null
+    sycoRuntime: {
+      enabled: isVercelBuild,
+      ...approvedProductionRuntime
+    }
   },
   runtimeConfig: {
     public: {

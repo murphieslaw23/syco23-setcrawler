@@ -46,6 +46,30 @@ Keep `SUPABASE_ANON_KEY`, the database password, the complete `DATABASE_URL`,
 and provider credentials in their platform or host secret stores. Do not add
 them to this runbook.
 
+## v0.2.1 release evidence
+
+A deployed topology is not, by itself, a release-closed system. The authoritative
+gate state lives in [`release-status.md`](release-status.md). Attach only
+sanitized evidence to issues #2, #4, #5, #6, and #12.
+
+Before closing issue #4 or tagging `v0.2.1`, execute and record all of these
+checks against one exact commit:
+
+1. `GET https://api.syco23.org/health` returns the expected service payload.
+2. A real Supabase login succeeds and `/auth/me` resolves the expected role.
+3. Viewer, editor, and admin authorization is verified on representative read
+   and write routes.
+4. The production dashboard, inbox, import queue, and search-profile views load
+   without fixture or local-role fallbacks.
+5. Exactly one Celery beat scheduler is running.
+6. Queued, due-retry, and stale-processing jobs recover after a controlled Redis
+   interruption without losing PostgreSQL history or resetting retry budgets.
+7. Metadata-only provider smoke completes within the approved provider
+   boundaries and never creates or publishes media.
+8. Logs and evidence contain commit SHAs, timestamps, HTTP status summaries,
+   sanitized job IDs, and recovery outcomes, but no bearer tokens, database
+   URLs, service-role keys, or provider credentials.
+
 ## Database decision
 
 Do not apply the SETCRAWLER migrations to the existing

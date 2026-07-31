@@ -6,6 +6,16 @@ import yaml
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def test_release_status_names_every_v021_gate() -> None:
+    text = (ROOT / "docs" / "release-status.md").read_text()
+
+    for gate in ("CI runner", "JWT role matrix", "provider smoke", "observability"):
+        assert gate in text
+    for issue in ("#2", "#4", "#5", "#6", "#12"):
+        assert issue in text
+    assert "v0.2.1 must not be tagged" in text
+
+
 def test_compose_exposes_the_provider_worker_contract() -> None:
     compose = (ROOT / "docker-compose.yml").read_text()
 
@@ -212,3 +222,29 @@ def test_deploy_script_rejects_a_restarting_beat_scheduler() -> None:
     assert "BEAT_STABILITY_SECONDS" in deploy_script
     assert "{{.RestartCount}}" in deploy_script
     assert 'fail "worker-beat restarted during the stability window"' in deploy_script
+
+
+def test_ci_governance_and_pull_request_evidence_contract() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    template = (ROOT / ".github" / "pull_request_template.md").read_text()
+
+    for expected in (
+        "workflow_dispatch:",
+        "permissions:",
+        "contents: read",
+        "concurrency:",
+        "cancel-in-progress: true",
+        "timeout-minutes: 20",
+        "timeout-minutes: 15",
+    ):
+        assert expected in workflow
+
+    for expected in (
+        "Migration notes",
+        "Test evidence",
+        "Provider-boundary review",
+        "Secret scan",
+        "Rollback note",
+        "Public-data-leak review",
+    ):
+        assert expected in template

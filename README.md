@@ -4,6 +4,16 @@
 discovery platform. It collects metadata for long-form DJ sets and mixes,
 scores likely sets, and puts every accepted record into an editorial inbox.
 
+## Release status
+
+The v0.2 runtime is a deployed production baseline, but deployment does not mean
+the release is closed. The `v0.2.1` tag remains blocked until the CI runner,
+real JWT role matrix, metadata-only provider smoke, observability, and
+production recovery evidence are complete for one exact commit.
+
+See [`docs/release-status.md`](docs/release-status.md) for the authoritative
+gate table and sanitized evidence requirements.
+
 ## What v0.2 includes
 
 - Nuxt 3 operator UI: dashboard, inbox, set review, manual import receipt,
