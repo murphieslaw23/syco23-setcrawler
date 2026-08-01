@@ -41,12 +41,24 @@ def build_provider_dispatch(job: ImportJob) -> ProviderDispatch:
     if job.job_type is JobType.search_profile:
         if job.profile_id is None:
             raise ProviderDispatchError("discovery job has no profile_id")
+        declared_provider = job.details.get("provider_key")
+        if isinstance(declared_provider, str):
+            provider_key = declared_provider
+        arguments: dict[str, JsonValue] = {
+            "profile_id": str(job.profile_id),
+        }
+        operation = job.details.get("operation")
+        parameters = job.details.get("parameters")
+        if isinstance(operation, str):
+            arguments["operation"] = operation
+        if isinstance(parameters, dict):
+            arguments["parameters"] = parameters
         return ProviderDispatch(
             job_id=job.id,
             provider_key=provider_key,
             capability=ProviderCapability.discovery,
             operation=ProviderOperation.discover,
-            arguments={"profile_id": str(job.profile_id)},
+            arguments=arguments,
         )
     if job.url is None:
         raise ProviderDispatchError("metadata job has no URL")

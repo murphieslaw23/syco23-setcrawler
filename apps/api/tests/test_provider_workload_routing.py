@@ -81,6 +81,32 @@ def test_url_and_profile_jobs_produce_normalized_dispatch_envelopes() -> None:
     }
 
 
+def test_profile_dispatch_uses_descriptor_fields_from_durable_job() -> None:
+    profile_job = ImportJob(
+        id=uuid4(),
+        source=SetSource.youtube,
+        job_type=JobType.search_profile,
+        profile_id=uuid4(),
+        details={
+            "provider_key": "fixture",
+            "capability": "discovery",
+            "operation": "search",
+            "parameters": {"term": "warehouse liveset"},
+        },
+    )
+
+    dispatch = build_provider_dispatch(profile_job)
+
+    assert dispatch.provider_key == "fixture"
+    assert dispatch.capability is ProviderCapability.discovery
+    assert dispatch.operation is ProviderOperation.discover
+    assert dispatch.arguments == {
+        "profile_id": str(profile_job.profile_id),
+        "operation": "search",
+        "parameters": {"term": "warehouse liveset"},
+    }
+
+
 def test_descriptor_owns_task_and_workload_routing() -> None:
     registry = build_provider_registry(_settings())
     celery = _Celery()
