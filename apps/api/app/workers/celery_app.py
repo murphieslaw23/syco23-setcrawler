@@ -1,6 +1,7 @@
 from celery import Celery
 
 from app.core.config import get_settings
+from app.core.observability import register_celery_observability
 
 
 settings = get_settings()
@@ -45,3 +46,4 @@ celery_app.conf.imports = (
     "app.workers.soundcloud_importer",
     "app.workers.youtube_poller",
 )
+register_celery_observability(get_settings)

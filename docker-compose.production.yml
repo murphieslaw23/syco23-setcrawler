@@ -1,5 +1,11 @@
 name: syco23-setcrawler-production
 
+x-logging: &default-logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 x-backend-environment: &backend-environment
   ENVIRONMENT: production
   REPOSITORY_MODE: postgres
@@ -22,6 +28,13 @@ x-backend-environment: &backend-environment
   JOB_CLAIM_TTL_SECONDS: "${JOB_CLAIM_TTL_SECONDS:-300}"
   JOB_REDRIVE_INTERVAL_SECONDS: "${JOB_REDRIVE_INTERVAL_SECONDS:-60}"
   JOB_REDRIVE_BATCH_SIZE: "${JOB_REDRIVE_BATCH_SIZE:-100}"
+  HEALTH_PROBE_TIMEOUT_SECONDS: "${HEALTH_PROBE_TIMEOUT_SECONDS:-1}"
+  HEALTH_PROBE_CACHE_SECONDS: "${HEALTH_PROBE_CACHE_SECONDS:-10}"
+  BEAT_STALE_AFTER_SECONDS: "${BEAT_STALE_AFTER_SECONDS:-180}"
+  DEAD_LETTER_ALERT_THRESHOLD: "${DEAD_LETTER_ALERT_THRESHOLD:-1}"
+  STUCK_JOB_ALERT_THRESHOLD: "${STUCK_JOB_ALERT_THRESHOLD:-1}"
+  REDRIVE_FAILURE_ALERT_THRESHOLD: "${REDRIVE_FAILURE_ALERT_THRESHOLD:-1}"
+  PROVIDER_FAILURE_ALERT_THRESHOLD: "${PROVIDER_FAILURE_ALERT_THRESHOLD:-1}"
 
 x-worker-base: &worker-base
   build:
@@ -36,6 +49,7 @@ x-worker-base: &worker-base
   depends_on:
     redis:
       condition: service_healthy
+  logging: *default-logging
 
 services:
   api:
@@ -47,6 +61,7 @@ services:
       <<: *backend-environment
       API_HOST: 0.0.0.0
       API_PORT: "8000"
+      SERVICE_COMPONENT: api
     expose:
       - "8000"
     read_only: true
@@ -55,6 +70,7 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+    logging: *default-logging
     healthcheck:
       test:
         - CMD
@@ -86,9 +102,13 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
+    logging: *default-logging
 
   worker-provider-api:
     <<: *worker-base
+    environment:
+      <<: *backend-environment
+      SERVICE_COMPONENT: worker-provider-api
     command:
       - celery
       - -A
@@ -101,6 +121,9 @@ services:
 
   worker-provider-scrape:
     <<: *worker-base
+    environment:
+      <<: *backend-environment
+      SERVICE_COMPONENT: worker-provider-scrape
     command:
       - celery
       - -A
@@ -115,6 +138,9 @@ services:
 
   worker-process:
     <<: *worker-base
+    environment:
+      <<: *backend-environment
+      SERVICE_COMPONENT: worker-process
     command:
       - celery
       - -A
@@ -127,6 +153,9 @@ services:
 
   worker-beat:
     <<: *worker-base
+    environment:
+      <<: *backend-environment
+      SERVICE_COMPONENT: worker-beat
     command:
       - celery
       - -A
@@ -152,6 +181,7 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    logging: *default-logging
 
 volumes:
   redis_data:

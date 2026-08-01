@@ -7,6 +7,7 @@ from app.repositories.base import Repository
 from app.services.provider_contracts import ProviderCapability
 from app.services.provider_health import descriptor_runtime_state
 from app.services.provider_registry import ProviderRegistry, ProviderRegistryError
+from app.services.operational_health import record_periodic_task_success
 from app.services.cron_schedule import cron_matches, next_cron_time, previous_cron_time
 from app.workers.dispatch import JobDispatcher
 from app.workers.celery_app import celery_app
@@ -82,9 +83,15 @@ def schedule_profiles() -> dict[str, int]:
     from app.services.provider import get_provider_registry
     from app.workers.normalize_worker import get_worker_repository
 
-    return schedule_due_profiles(
+    settings = get_settings()
+    result = schedule_due_profiles(
         get_worker_repository(),
         JobDispatcher(),
         get_provider_registry(),
-        get_settings(),
+        settings,
     )
+    record_periodic_task_success(
+        settings,
+        task_name="schedule_profiles",
+    )
+    return result

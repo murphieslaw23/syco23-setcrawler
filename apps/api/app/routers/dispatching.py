@@ -1,10 +1,14 @@
 from datetime import UTC, datetime
 from collections.abc import Callable
+import logging
 
 from fastapi import HTTPException, status
 
 from app.repositories.base import Repository
 from app.schemas.import_job import ImportJob, ImportJobPatch, JobStatus
+
+
+logger = logging.getLogger("app.jobs")
 
 
 def dispatch_or_terminalize(
@@ -32,3 +36,12 @@ def dispatch_or_terminalize(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Import dispatch is temporarily unavailable",
         ) from error
+    logger.info(
+        "Import job dispatched",
+        extra={
+            "event": "job_dispatched",
+            "job_id": str(job.id),
+            "provider": job.source.value,
+            "job_type": job.job_type.value,
+        },
+    )

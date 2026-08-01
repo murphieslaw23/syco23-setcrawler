@@ -28,7 +28,7 @@ evidence is required below.
 | CI runner | #12 | GitHub-hosted API and web jobs start, execute their first steps, and pass on the exact release commit. | Verified by run `30599334190`. |
 | JWT role matrix | #2 | Real Supabase JWT checks prove viewer, editor, and admin authorization through `/auth/me` and representative protected routes. | Pending. |
 | Provider smoke | #5 | Sanitized metadata-only YouTube, SoundCloud, and permitted FTM smoke results, including duplicate and below-threshold behavior. | Pending. |
-| Observability | #6 | Correlated API/worker/beat logs, health coverage, dead-letter and stale-job alerts, retention, redaction, SLOs, and release runbook evidence. | Pending. |
+| Observability | #6 | Correlated API/worker/beat logs, health coverage, dead-letter and stale-job alerts, retention, redaction, SLOs, and release runbook evidence. | Implementation prepared in [`observability.md`](observability.md); live exact-commit evidence remains pending. |
 | Deployment and recovery reconciliation | #4 | Public health, login, dashboard, inbox, search profiles, exactly one beat scheduler, and queued/retry/stale-processing recovery match production reality. | Pending final evidence. |
 
 ## Evidence handling

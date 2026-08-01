@@ -14,6 +14,7 @@ from app.schemas.import_job import ImportJobPatch, JobStatus
 from app.services.import_pipeline import process_payload
 from app.services.import_pipeline import retry_delay
 from app.services.normalizer import RawSetPayload
+from app.services.operational_health import record_periodic_task_success
 from app.workers.celery_app import celery_app
 from app.workers.dispatch import JobDispatcher
 
@@ -151,13 +152,26 @@ def redrive_import_jobs() -> int:
         limit=settings.job_redrive_batch_size,
     )
     dispatched = 0
+    publish_failures = 0
     for job in jobs:
         try:
             dispatcher.retry(job)
         except Exception:
-            logger.exception("Failed to redrive import job %s", job.id)
+            publish_failures += 1
+            logger.exception(
+                "Failed to redrive import job",
+                extra={
+                    "event": "redrive_publish_failed",
+                    "job_id": str(job.id),
+                },
+            )
             continue
         dispatched += 1
+    record_periodic_task_success(
+        settings,
+        task_name="redrive_import_jobs",
+        redrive_publish_failures=publish_failures,
+    )
     return dispatched
 
 

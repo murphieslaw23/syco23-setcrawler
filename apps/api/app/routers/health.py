@@ -15,9 +15,15 @@ def health(request: Request) -> dict[str, object]:
         registry,
         request.app.state.settings,
     )
+    operational = request.app.state.operational_probe(registry)
     return {
         "status": "ok",
         "service": "syco23-setcrawler-api",
-        "ready": all(item["configuration_complete"] for item in providers.values()),
+        "ready": (
+            all(item["configuration_complete"] for item in providers.values())
+            and bool(operational["ready"])
+        ),
         "providers": providers,
+        "dependencies": operational["dependencies"],
+        "alerts": operational["alerts"],
     }
