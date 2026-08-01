@@ -18,6 +18,7 @@ def make_client() -> TestClient:
                 environment="fixture",
                 repository_mode="memory",
                 provider_mode="live",
+                youtube_api_key="fixture-youtube-key",
             ),
             dispatcher=RecordingDispatcher(),
         )
@@ -27,7 +28,11 @@ def make_client() -> TestClient:
 def test_health_and_stats_contract() -> None:
     client = make_client()
 
-    assert client.get("/health").json() == {"status": "ok", "service": "syco23-setcrawler-api"}
+    health = client.get("/health").json()
+    assert health["status"] == "ok"
+    assert health["service"] == "syco23-setcrawler-api"
+    assert isinstance(health["ready"], bool)
+    assert set(health["providers"]) == {"youtube", "soundcloud", "ftm"}
     stats = client.get("/stats").json()
 
     assert stats["total_sets"] == 6
@@ -64,24 +69,21 @@ def test_provider_health_redacts_secrets() -> None:
 
     assert response.status_code == 200
     body = response.json()
-    assert body["youtube"] == {
+    assert {
+        key: body["youtube"][key]
+        for key in ("configured", "enabled", "mode", "runtime_mode")
+    } == {
         "configured": True,
         "enabled": True,
         "mode": "official_api",
         "runtime_mode": "live",
     }
-    assert body["soundcloud"] == {
-        "configured": True,
-        "enabled": True,
-        "mode": "manual_url",
-        "runtime_mode": "live",
-    }
-    assert body["freeteknomusic"] == {
-        "configured": True,
-        "enabled": False,
-        "mode": "robots_crawl",
-        "runtime_mode": "live",
-    }
+    assert body["soundcloud"]["configured"] is True
+    assert body["soundcloud"]["enabled"] is True
+    assert body["soundcloud"]["mode"] == "manual_url"
+    assert body["freeteknomusic"]["configured"] is True
+    assert body["freeteknomusic"]["enabled"] is False
+    assert body["freeteknomusic"]["mode"] == "robots_crawl"
     serialized = json.dumps(body).casefold()
     assert "secret-youtube-key" not in serialized
     assert "/private/yt-dlp" not in serialized

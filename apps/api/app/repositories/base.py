@@ -155,4 +155,12 @@ class Repository(Protocol):
         profile_id: UUID,
     ) -> tuple[ImportJob, bool] | None: ...
 
+    def mark_profile_scheduled(
+        self,
+        profile_id: UUID,
+        *,
+        scheduled_at: datetime,
+        next_scheduled_at: datetime,
+    ) -> SearchProfile | None: ...
+
     def stats(self) -> dict[str, Any]: ...

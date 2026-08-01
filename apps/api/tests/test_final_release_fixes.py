@@ -146,6 +146,7 @@ def _live_settings() -> Settings:
         environment="fixture",
         repository_mode="memory",
         provider_mode="live",
+        youtube_api_key="fixture-youtube-key",
     )
 
 

@@ -105,6 +105,10 @@ def test_profile_run_outcome_round_trips_through_exact_job_details() -> None:
     listed = repository.list_profiles()[0]
     assert repository.jobs[job.id].details == {
         "query": "round trip liveset",
+        "provider_key": "youtube",
+        "capability": "discovery",
+        "operation": "search",
+        "parameters": {"query": "round trip liveset"},
         "last_result_count": 23,
         "last_error_code": "quota_limited",
         "result_count": 23,

@@ -15,6 +15,7 @@ from app.services.provider_contracts import (
 _PROVIDER_KEY = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 _SETTING_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
 _TASK_NAME = re.compile(r"^app(?:\.[a-zA-Z_][a-zA-Z0-9_]*)+$")
+_OPERATION_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,79}$")
 _CAPABILITY_METHODS: Mapping[ProviderCapability, tuple[str, ...]] = MappingProxyType(
     {
         ProviderCapability.discovery: ("discover",),
@@ -155,6 +156,24 @@ def _descriptor_problems(descriptor: ProviderDescriptor) -> list[str]:
             )
     if len(set(descriptor.required_settings)) != len(descriptor.required_settings):
         problems.append(f"provider {label}: duplicate required setting declaration")
+    if descriptor.enabled_setting is not None and _SETTING_NAME.fullmatch(
+        descriptor.enabled_setting
+    ) is None:
+        problems.append(f"provider {label}: enabled setting must be a variable name")
+    for operation, parameters in descriptor.discovery_operations.items():
+        if not isinstance(operation, str) or _OPERATION_NAME.fullmatch(operation) is None:
+            problems.append(f"provider {label}: invalid discovery operation")
+        if ProviderCapability.discovery not in valid_capabilities:
+            problems.append(
+                f"provider {label}: discovery operation declared without discovery capability"
+            )
+        if any(
+            not isinstance(parameter, str) or _OPERATION_NAME.fullmatch(parameter) is None
+            for parameter in parameters
+        ):
+            problems.append(
+                f"provider {label}: invalid parameter for discovery operation {operation}"
+            )
     return problems
 
 

@@ -1329,13 +1329,17 @@ class PostgresRepository:
                 row = cursor.execute(
                     """
                     insert into search_profiles (
-                        name, query, schedule_cron, enabled
-                    ) values (%s, %s, %s, %s)
+                        name, query, source, operation, parameters,
+                        schedule_cron, enabled
+                    ) values (%s, %s, %s, %s, %s, %s, %s)
                     returning *
                     """,
                     (
                         payload.name,
                         payload.query,
+                        payload.source,
+                        payload.operation,
+                        Jsonb(payload.parameters),
                         payload.schedule_cron,
                         payload.enabled,
                     ),
@@ -1439,12 +1443,40 @@ class PostgresRepository:
                     returning *
                     """,
                     (
-                        f"youtube-search://{profile['query']}",
+                        f"{profile['source']}-{profile['operation']}://{profile['query']}",
                         profile_id,
-                        Jsonb({"query": profile["query"]}),
+                        Jsonb(
+                            {
+                                "provider_key": profile["source"],
+                                "capability": "discovery",
+                                "operation": profile["operation"],
+                                "parameters": profile["parameters"],
+                                "query": profile["query"],
+                            }
+                        ),
                     ),
                 ).fetchone()
         return _job(row), True
+
+    def mark_profile_scheduled(
+        self,
+        profile_id: UUID,
+        *,
+        scheduled_at: datetime,
+        next_scheduled_at: datetime,
+    ) -> SearchProfile | None:
+        with self.pool.connection() as connection:
+            with connection.cursor() as cursor:
+                row = cursor.execute(
+                    """
+                    update search_profiles
+                    set last_scheduled_at = %s, next_scheduled_at = %s
+                    where id = %s and deleted_at is null
+                    returning *
+                    """,
+                    (scheduled_at, next_scheduled_at, profile_id),
+                ).fetchone()
+        return _profile(row) if row else None
 
     def stats(self) -> dict[str, Any]:
         with self.pool.connection() as connection:
