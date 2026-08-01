@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from app.core.config import Settings
 from app.main import create_app
 from app.repositories.memory import InMemoryRepository
-from app.schemas.profile import SearchProfileCreate
+from app.schemas.profile import SearchProfile, SearchProfileCreate
 from app.services.provider_contracts import (
     ProviderCapability,
     ProviderDescriptor,
@@ -30,6 +30,16 @@ class _SchedulerDispatcher:
 class _DiscoveryAdapter:
     async def discover(self, request):
         return request
+
+
+def test_profile_read_model_ignores_repository_only_columns() -> None:
+    profile = SearchProfile(
+        name="Repository row",
+        query="warehouse liveset",
+        deleted_at=None,
+    )
+
+    assert profile.name == "Repository row"
 
 
 def _descriptor(

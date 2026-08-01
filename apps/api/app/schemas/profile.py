@@ -51,6 +51,8 @@ class SearchProfileUpdate(BaseModel):
 
 
 class SearchProfile(SearchProfileCreate):
+    model_config = ConfigDict(extra="ignore")
+
     id: UUID = Field(default_factory=uuid4)
     last_scheduled_at: datetime | None = None
     next_scheduled_at: datetime | None = None
