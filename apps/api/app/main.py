@@ -13,7 +13,17 @@ from app.core.observability import (
 )
 from app.repositories.base import Repository
 from app.repository import InMemoryRepository, PostgresRepository
-from app.routers import auth, candidates, health, imports, providers, search_profiles, sets, stats
+from app.routers import (
+    auth,
+    candidates,
+    health,
+    imports,
+    merge_candidates,
+    providers,
+    search_profiles,
+    sets,
+    stats,
+)
 from app.services.provider import build_provider_registry, get_provider_registry
 from app.services.operational_health import OperationalHealthProbe, OperationalProbe
 from app.workers.dispatch import JobDispatcher
@@ -87,6 +97,7 @@ def create_app(
     app.include_router(imports.router)
     app.include_router(sets.router)
     app.include_router(candidates.router)
+    app.include_router(merge_candidates.router)
     app.include_router(search_profiles.router)
     app.include_router(stats.router)
     return app

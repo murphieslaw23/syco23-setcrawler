@@ -129,6 +129,7 @@ def test_compose_exposes_the_provider_worker_contract() -> None:
         "20260801120000_provider_profile_scheduling.sql:/docker-entrypoint-initdb.d/20260801120000-provider-profile-scheduling.sql:ro",
         "20260801150000_scheduler_hardening.sql:/docker-entrypoint-initdb.d/20260801150000-scheduler-hardening.sql:ro",
         "20260801210000_provider_discovery_runtime.sql:/docker-entrypoint-initdb.d/20260801210000-provider-discovery-runtime.sql:ro",
+        "20260801230000_canonical_set_merge.sql:/docker-entrypoint-initdb.d/20260801230000-canonical-set-merge.sql:ro",
     )
     assert all(item in compose for item in init_mounts)
     assert [compose.index(item) for item in init_mounts] == sorted(

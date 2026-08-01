@@ -5,6 +5,14 @@ from uuid import UUID
 from app.schemas.auth import UserRole
 from app.schemas.candidate import Candidate, CandidateCreate
 from app.schemas.import_job import ImportJob, ImportJobPage, ImportJobPatch, JobStatus, JobType
+from app.schemas.merge import (
+    MergeCandidate,
+    MergeCandidatePage,
+    MergeCandidateStatus,
+    MergeDecision,
+    MergeScore,
+    SetProviderSource,
+)
 from app.schemas.profile import SearchProfile, SearchProfileCreate, SearchProfileUpdate
 from app.schemas.set import ReviewStatus, SetDetail, SetPage, SetPatch, SetSource
 from app.services.heuristic import HeuristicConfig, ScoreResult
@@ -140,6 +148,63 @@ class Repository(Protocol):
         provider_key: str,
         external_id: str,
     ) -> ProviderItemPayload | None: ...
+
+    def create_merge_candidate(
+        self,
+        *,
+        source_set_id: UUID,
+        target_set_id: UUID,
+        score: MergeScore,
+    ) -> MergeCandidate: ...
+
+    def suggest_merge_candidates(
+        self,
+        set_id: UUID,
+    ) -> list[MergeCandidate]: ...
+
+    def get_merge_candidate(
+        self,
+        candidate_id: UUID,
+    ) -> MergeCandidate | None: ...
+
+    def list_merge_candidates(
+        self,
+        *,
+        status: MergeCandidateStatus | None,
+        limit: int,
+        offset: int,
+    ) -> MergeCandidatePage: ...
+
+    def approve_merge_candidate(
+        self,
+        candidate_id: UUID,
+        *,
+        actor: str,
+    ) -> MergeCandidate | None: ...
+
+    def reject_merge_candidate(
+        self,
+        candidate_id: UUID,
+        *,
+        actor: str,
+    ) -> MergeCandidate | None: ...
+
+    def restore_merge_candidate(
+        self,
+        candidate_id: UUID,
+        *,
+        actor: str,
+    ) -> MergeCandidate | None: ...
+
+    def list_merge_decisions(
+        self,
+        candidate_id: UUID,
+    ) -> list[MergeDecision]: ...
+
+    def list_set_provider_sources(
+        self,
+        set_id: UUID,
+    ) -> list[SetProviderSource]: ...
 
     def list_sets(
         self,

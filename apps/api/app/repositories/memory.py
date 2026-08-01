@@ -11,6 +11,12 @@ from app.schemas import (
     ImportJobPatch,
     JobStatus,
     JobType,
+    MergeCandidate,
+    MergeCandidatePage,
+    MergeCandidateStatus,
+    MergeDecision,
+    MergeDecisionAction,
+    MergeScore,
     ReviewStatus,
     SearchProfile,
     SearchProfileCreate,
@@ -19,6 +25,7 @@ from app.schemas import (
     SetImage,
     SetPage,
     SetPatch,
+    SetProviderSource,
     SetSource,
     SetSummary,
     UserRole,
@@ -28,6 +35,10 @@ from app.schemas.import_job import validate_job_transition
 from app.repositories.base import ActiveProfileJobsError
 from app.services.heuristic import HeuristicConfig, ScoreResult
 from app.services.normalizer import RawSetPayload
+from app.services.merge_scoring import (
+    MERGE_SUGGESTION_THRESHOLD,
+    score_set_merge,
+)
 from app.services.provider_contracts import ProviderItemPayload
 from app.services.provider_sources import (
     ProviderSourceProjection,
@@ -162,7 +173,12 @@ class InMemoryRepository:
     def __init__(self) -> None:
         self.sets: dict[UUID, SetDetail] = {}
         self._provider_sources: dict[UUID, ProviderSourceProjection] = {}
+        self._retained_provider_sources: dict[
+            UUID, list[ProviderSourceProjection]
+        ] = {}
         self._provider_items: dict[tuple[str, str], ProviderItemPayload] = {}
+        self.merge_candidates: dict[UUID, MergeCandidate] = {}
+        self.merge_decisions: list[MergeDecision] = []
         self.jobs: dict[UUID, ImportJob] = {}
         self.profiles: dict[UUID, SearchProfile] = {}
         self._deleted_profile_ids: set[UUID] = set()
@@ -228,7 +244,11 @@ class InMemoryRepository:
     ) -> SetPage:
         for record in self.sets.values():
             self._validate_source_projection_unlocked(record)
-        records = list(self.sets.values())
+        records = [
+            record
+            for record in self.sets.values()
+            if record.duplicate_of_id is None
+        ]
         if source:
             records = [record for record in records if record.source == source]
         if status:
@@ -257,6 +277,8 @@ class InMemoryRepository:
         return deepcopy(record)
 
     def _validate_source_projection_unlocked(self, record: SetDetail) -> None:
+        if record.duplicate_of_id is not None:
+            return
         projection = self._provider_sources.get(record.id)
         validate_source_projection(
             legacy_source=record.source,
@@ -609,12 +631,9 @@ class InMemoryRepository:
             ):
                 return record.id
         for record in self.sets.values():
-            if record.canonical_url == payload.canonical_url:
-                return record.id
-        for record in self.sets.values():
             if (
-                record.raw_payload.get("duplicate_fingerprint")
-                == fingerprint
+                record.source == payload.source
+                and record.canonical_url == payload.canonical_url
             ):
                 return record.id
         return None
@@ -1028,6 +1047,389 @@ class InMemoryRepository:
             item = self._provider_items.get((provider_key, external_id))
             return deepcopy(item) if item is not None else None
 
+    def list_set_provider_sources(
+        self,
+        set_id: UUID,
+    ) -> list[SetProviderSource]:
+        with self._lock:
+            values: list[ProviderSourceProjection] = []
+            primary = self._provider_sources.get(set_id)
+            if primary is not None:
+                values.append(primary)
+            values.extend(self._retained_provider_sources.get(set_id, []))
+            return [
+                SetProviderSource(
+                    provider_key=item.provider_key,
+                    external_id=item.external_id,
+                    canonical_url=item.canonical_url,
+                    raw_metadata=deepcopy(item.raw_metadata),
+                    is_primary=item.is_primary,
+                )
+                for item in values
+            ]
+
+    def _replace_provider_sources_unlocked(
+        self,
+        set_id: UUID,
+        sources: list[SetProviderSource],
+    ) -> None:
+        primary = next((item for item in sources if item.is_primary), None)
+        if primary is None:
+            self._provider_sources.pop(set_id, None)
+        else:
+            self._provider_sources[set_id] = ProviderSourceProjection(
+                provider_key=primary.provider_key,
+                external_id=primary.external_id,
+                canonical_url=primary.canonical_url,
+                raw_metadata=deepcopy(primary.raw_metadata),
+                is_primary=True,
+            )
+        retained = [
+            ProviderSourceProjection(
+                provider_key=item.provider_key,
+                external_id=item.external_id,
+                canonical_url=item.canonical_url,
+                raw_metadata=deepcopy(item.raw_metadata),
+                is_primary=False,
+            )
+            for item in sources
+            if primary is None
+            or (item.provider_key, item.external_id)
+            != (primary.provider_key, primary.external_id)
+        ]
+        if retained:
+            self._retained_provider_sources[set_id] = retained
+        else:
+            self._retained_provider_sources.pop(set_id, None)
+
+    def create_merge_candidate(
+        self,
+        *,
+        source_set_id: UUID,
+        target_set_id: UUID,
+        score: MergeScore,
+    ) -> MergeCandidate:
+        with self._lock:
+            if source_set_id == target_set_id:
+                raise ValueError("merge candidate requires two sets")
+            source = self.sets.get(source_set_id)
+            target = self.sets.get(target_set_id)
+            if source is None or target is None:
+                raise KeyError("merge candidate set not found")
+            if source.duplicate_of_id is not None or target.duplicate_of_id is not None:
+                raise ValueError("merged sets cannot be suggested")
+            source_provider = self._provider_sources.get(source_set_id)
+            target_provider = self._provider_sources.get(target_set_id)
+            if (
+                source_provider is None
+                or target_provider is None
+                or source_provider.provider_key == target_provider.provider_key
+            ):
+                raise ValueError("merge candidates must be cross-provider")
+            pair = frozenset({source_set_id, target_set_id})
+            for existing in self.merge_candidates.values():
+                if frozenset(
+                    {existing.source_set_id, existing.target_set_id}
+                ) == pair:
+                    return deepcopy(existing)
+            candidate = MergeCandidate(
+                source_set_id=source_set_id,
+                target_set_id=target_set_id,
+                score=score.score,
+                component_scores=score.components,
+                reasons=score.reasons,
+            )
+            self.merge_candidates[candidate.id] = candidate
+            return deepcopy(candidate)
+
+    def suggest_merge_candidates(
+        self,
+        set_id: UUID,
+    ) -> list[MergeCandidate]:
+        with self._lock:
+            source = self.sets.get(set_id)
+            source_projection = self._provider_sources.get(set_id)
+            if (
+                source is None
+                or source.duplicate_of_id is not None
+                or source_projection is None
+            ):
+                return []
+            suggestions: list[MergeCandidate] = []
+            for target in self.sets.values():
+                if target.id == set_id or target.duplicate_of_id is not None:
+                    continue
+                target_projection = self._provider_sources.get(target.id)
+                if (
+                    target_projection is None
+                    or target_projection.provider_key
+                    == source_projection.provider_key
+                ):
+                    continue
+                score = score_set_merge(source, target)
+                if score.score < MERGE_SUGGESTION_THRESHOLD:
+                    continue
+                suggestions.append(
+                    self.create_merge_candidate(
+                        source_set_id=set_id,
+                        target_set_id=target.id,
+                        score=score,
+                    )
+                )
+            return suggestions
+
+    def list_merge_candidates(
+        self,
+        *,
+        status: MergeCandidateStatus | None,
+        limit: int,
+        offset: int,
+    ) -> MergeCandidatePage:
+        with self._lock:
+            values = [
+                item
+                for item in self.merge_candidates.values()
+                if status is None or item.status is status
+            ]
+            values.sort(
+                key=lambda item: (item.score, item.created_at, str(item.id)),
+                reverse=True,
+            )
+            return MergeCandidatePage(
+                items=[deepcopy(item) for item in values[offset : offset + limit]],
+                total=len(values),
+                limit=limit,
+                offset=offset,
+            )
+
+    def get_merge_candidate(
+        self,
+        candidate_id: UUID,
+    ) -> MergeCandidate | None:
+        with self._lock:
+            candidate = self.merge_candidates.get(candidate_id)
+            return deepcopy(candidate) if candidate is not None else None
+
+    def list_merge_decisions(
+        self,
+        candidate_id: UUID,
+    ) -> list[MergeDecision]:
+        with self._lock:
+            return [
+                deepcopy(item)
+                for item in self.merge_decisions
+                if item.merge_candidate_id == candidate_id
+            ]
+
+    def _merge_state_unlocked(
+        self,
+        candidate: MergeCandidate,
+    ) -> dict[str, object]:
+        source = self.sets[candidate.source_set_id]
+        target = self.sets[candidate.target_set_id]
+        return {
+            "source_set_id": str(source.id),
+            "target_set_id": str(target.id),
+            "source_review_status": source.review_status.value,
+            "source_duplicate_of_id": (
+                str(source.duplicate_of_id)
+                if source.duplicate_of_id is not None
+                else None
+            ),
+            "source_provider_items": [
+                {
+                    **item.model_dump(mode="json"),
+                    "raw_metadata": deepcopy(item.raw_metadata),
+                }
+                for item in self.list_set_provider_sources(source.id)
+            ],
+            "target_provider_items": [
+                {
+                    **item.model_dump(mode="json"),
+                    "raw_metadata": deepcopy(item.raw_metadata),
+                }
+                for item in self.list_set_provider_sources(target.id)
+            ],
+        }
+
+    def approve_merge_candidate(
+        self,
+        candidate_id: UUID,
+        *,
+        actor: str,
+    ) -> MergeCandidate | None:
+        with self._lock:
+            candidate = self.merge_candidates.get(candidate_id)
+            if candidate is None or candidate.status is not MergeCandidateStatus.pending:
+                return None
+            source = self.sets.get(candidate.source_set_id)
+            target = self.sets.get(candidate.target_set_id)
+            if (
+                source is None
+                or target is None
+                or source.duplicate_of_id is not None
+                or target.duplicate_of_id is not None
+            ):
+                return None
+            before = self._merge_state_unlocked(candidate)
+            source_sources = self.list_set_provider_sources(source.id)
+            target_sources = self.list_set_provider_sources(target.id)
+            target_identities = {
+                (item.provider_key, item.external_id) for item in target_sources
+            }
+            combined = list(target_sources)
+            combined.extend(
+                item.model_copy(update={"is_primary": False})
+                for item in source_sources
+                if (item.provider_key, item.external_id) not in target_identities
+            )
+            self._replace_provider_sources_unlocked(target.id, combined)
+            self._replace_provider_sources_unlocked(source.id, [])
+            now = _now()
+            self.sets[source.id] = source.model_copy(
+                update={
+                    "duplicate_of_id": target.id,
+                    "review_status": ReviewStatus.rejected,
+                    "updated_at": now,
+                }
+            )
+            updated = candidate.model_copy(
+                update={
+                    "status": MergeCandidateStatus.approved,
+                    "reviewed_by": actor,
+                    "reviewed_at": now,
+                    "updated_at": now,
+                }
+            )
+            self.merge_candidates[candidate_id] = updated
+            after = self._merge_state_unlocked(updated)
+            self.merge_decisions.append(
+                MergeDecision(
+                    merge_candidate_id=candidate_id,
+                    action=MergeDecisionAction.approve,
+                    actor=actor,
+                    before_state=before,
+                    after_state=after,
+                )
+            )
+            return deepcopy(updated)
+
+    def reject_merge_candidate(
+        self,
+        candidate_id: UUID,
+        *,
+        actor: str,
+    ) -> MergeCandidate | None:
+        with self._lock:
+            candidate = self.merge_candidates.get(candidate_id)
+            if candidate is None or candidate.status is not MergeCandidateStatus.pending:
+                return None
+            before = self._merge_state_unlocked(candidate)
+            now = _now()
+            updated = candidate.model_copy(
+                update={
+                    "status": MergeCandidateStatus.rejected,
+                    "reviewed_by": actor,
+                    "reviewed_at": now,
+                    "updated_at": now,
+                }
+            )
+            self.merge_candidates[candidate_id] = updated
+            self.merge_decisions.append(
+                MergeDecision(
+                    merge_candidate_id=candidate_id,
+                    action=MergeDecisionAction.reject,
+                    actor=actor,
+                    before_state=before,
+                    after_state=self._merge_state_unlocked(updated),
+                )
+            )
+            return deepcopy(updated)
+
+    def restore_merge_candidate(
+        self,
+        candidate_id: UUID,
+        *,
+        actor: str,
+    ) -> MergeCandidate | None:
+        with self._lock:
+            candidate = self.merge_candidates.get(candidate_id)
+            if candidate is None or candidate.status is not MergeCandidateStatus.approved:
+                return None
+            approval = next(
+                (
+                    item
+                    for item in reversed(self.merge_decisions)
+                    if item.merge_candidate_id == candidate_id
+                    and item.action is MergeDecisionAction.approve
+                ),
+                None,
+            )
+            if approval is None:
+                return None
+            before = self._merge_state_unlocked(candidate)
+            original_source = [
+                SetProviderSource.model_validate(item)
+                for item in approval.before_state["source_provider_items"]
+            ]
+            original_target = [
+                SetProviderSource.model_validate(item)
+                for item in approval.before_state["target_provider_items"]
+            ]
+            moved = {
+                (item.provider_key, item.external_id) for item in original_source
+            }
+            target_before = {
+                (item.provider_key, item.external_id) for item in original_target
+            }
+            current_target = self.list_set_provider_sources(
+                candidate.target_set_id
+            )
+            restored_target = [
+                item
+                for item in current_target
+                if (item.provider_key, item.external_id) not in moved
+                or (item.provider_key, item.external_id) in target_before
+            ]
+            self._replace_provider_sources_unlocked(
+                candidate.source_set_id,
+                original_source,
+            )
+            self._replace_provider_sources_unlocked(
+                candidate.target_set_id,
+                restored_target,
+            )
+            source = self.sets[candidate.source_set_id]
+            now = _now()
+            self.sets[source.id] = source.model_copy(
+                update={
+                    "duplicate_of_id": None,
+                    "review_status": ReviewStatus(
+                        approval.before_state["source_review_status"]
+                    ),
+                    "updated_at": now,
+                }
+            )
+            updated = candidate.model_copy(
+                update={
+                    "status": MergeCandidateStatus.restored,
+                    "reviewed_by": actor,
+                    "reviewed_at": now,
+                    "updated_at": now,
+                }
+            )
+            self.merge_candidates[candidate_id] = updated
+            self.merge_decisions.append(
+                MergeDecision(
+                    merge_candidate_id=candidate_id,
+                    action=MergeDecisionAction.restore,
+                    actor=actor,
+                    before_state=before,
+                    after_state=self._merge_state_unlocked(updated),
+                )
+            )
+            return deepcopy(updated)
+
     def delete_profile(self, profile_id: UUID) -> bool:
         with self._lock:
             if (
@@ -1158,20 +1560,25 @@ class InMemoryRepository:
     def stats(self) -> dict:
         by_source = {source.value: 0 for source in SetSource}
         by_status = {status.value: 0 for status in ReviewStatus}
-        for record in self.sets.values():
+        active_sets = tuple(
+            record
+            for record in self.sets.values()
+            if record.duplicate_of_id is None
+        )
+        for record in active_sets:
             by_source[record.source.value] += 1
             by_status[record.review_status.value] += 1
         job_counts = {status.value: 0 for status in JobStatus}
         for job in self.jobs.values():
             job_counts[job.status.value] += 1
         return {
-            "total_sets": len(self.sets),
+            "total_sets": len(active_sets),
             "by_source": by_source,
             "by_status": by_status,
             "score_bands": {
-                "high": sum(record.set_score >= 0.7 for record in self.sets.values()),
-                "review": sum(0.4 <= record.set_score < 0.7 for record in self.sets.values()),
-                "low": sum(record.set_score < 0.4 for record in self.sets.values()),
+                "high": sum(record.set_score >= 0.7 for record in active_sets),
+                "review": sum(0.4 <= record.set_score < 0.7 for record in active_sets),
+                "low": sum(record.set_score < 0.4 for record in active_sets),
             },
             "queue": {
                 "queued": job_counts[JobStatus.queued.value],

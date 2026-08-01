@@ -9,6 +9,16 @@ from app.schemas.import_job import (
     JobStatus,
     JobType,
 )
+from app.schemas.merge import (
+    MergeCandidate,
+    MergeCandidatePage,
+    MergeCandidateStatus,
+    MergeComponentScores,
+    MergeDecision,
+    MergeDecisionAction,
+    MergeScore,
+    SetProviderSource,
+)
 from app.schemas.profile import SearchProfile, SearchProfileCreate, SearchProfileUpdate
 from app.schemas.set import (
     ReviewStatus,
@@ -28,6 +38,13 @@ __all__ = [
     "ImportRequest",
     "JobStatus",
     "JobType",
+    "MergeCandidate",
+    "MergeCandidatePage",
+    "MergeCandidateStatus",
+    "MergeComponentScores",
+    "MergeDecision",
+    "MergeDecisionAction",
+    "MergeScore",
     "ReviewStatus",
     "SearchProfile",
     "SearchProfileCreate",
@@ -36,6 +53,7 @@ __all__ = [
     "SetImage",
     "SetPage",
     "SetPatch",
+    "SetProviderSource",
     "SetSource",
     "SetSummary",
     "UserRole",

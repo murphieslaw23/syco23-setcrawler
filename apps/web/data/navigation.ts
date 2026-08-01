@@ -1,6 +1,7 @@
 export const navigation = [
   { label: 'Overview', to: '/', icon: 'overview' },
   { label: 'Review Inbox', to: '/inbox', icon: 'inbox' },
+  { label: 'Merge Review', to: '/merge-candidates', icon: 'sets' },
   { label: 'Imports', to: '/imports', icon: 'import' },
   { label: 'Sets', to: '/sets', icon: 'sets' },
   { label: 'Artists', to: '/artists', icon: 'artists' },

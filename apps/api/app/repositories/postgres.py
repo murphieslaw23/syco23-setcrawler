@@ -13,6 +13,13 @@ from app.schemas import (
     ImportJobPatch,
     JobStatus,
     JobType,
+    MergeCandidate,
+    MergeCandidatePage,
+    MergeCandidateStatus,
+    MergeComponentScores,
+    MergeDecision,
+    MergeDecisionAction,
+    MergeScore,
     ReviewStatus,
     SearchProfile,
     SearchProfileCreate,
@@ -21,6 +28,7 @@ from app.schemas import (
     SetImage,
     SetPage,
     SetPatch,
+    SetProviderSource,
     SetSource,
     SetSummary,
     UserRole,
@@ -29,6 +37,10 @@ from app.schemas.import_job import validate_job_transition
 from app.repositories.base import ActiveProfileJobsError
 from app.services.heuristic import HeuristicConfig, ScoreResult
 from app.services.normalizer import RawSetPayload
+from app.services.merge_scoring import (
+    MERGE_SUGGESTION_THRESHOLD,
+    score_set_merge,
+)
 from app.services.provider_contracts import ProviderItemPayload
 from app.services.provider_sources import (
     SourceIntegrityError,
@@ -136,19 +148,107 @@ def _candidate(row: dict[str, Any]) -> Candidate:
 
 def _summary(row: dict[str, Any]) -> SetSummary:
     values = dict(row)
-    validate_source_projection(
-        legacy_source=values["source"],
-        legacy_external_id=values["source_id"],
-        provider_key=values.pop("linked_provider_key", None),
-        provider_external_id=values.pop("linked_provider_external_id", None),
-        is_primary=values.pop("linked_is_primary", None),
+    linked_provider_key = values.pop("linked_provider_key", None)
+    linked_provider_external_id = values.pop(
+        "linked_provider_external_id",
+        None,
     )
+    linked_is_primary = values.pop("linked_is_primary", None)
+    if values.get("merged_into_id") is None:
+        validate_source_projection(
+            legacy_source=values["source"],
+            legacy_external_id=values["source_id"],
+            provider_key=linked_provider_key,
+            provider_external_id=linked_provider_external_id,
+            is_primary=linked_is_primary,
+        )
     return SetSummary(
         **values,
         score_reasons=list(values.get("raw_payload", {}).get("score_reasons", [])),
         import_job_id=values.get("raw_payload", {}).get("import_job_id"),
-        duplicate_of_id=values.get("raw_payload", {}).get("duplicate_of_id"),
+        duplicate_of_id=(
+            values.get("merged_into_id")
+            or values.get("raw_payload", {}).get("duplicate_of_id")
+        ),
     )
+
+
+def _merge_candidate(row: dict[str, Any]) -> MergeCandidate:
+    values = dict(row)
+    values["component_scores"] = MergeComponentScores.model_validate(
+        values["component_scores"]
+    )
+    values["reasons"] = list(values["reasons"])
+    return MergeCandidate.model_validate(values)
+
+
+def _merge_decision(row: dict[str, Any]) -> MergeDecision:
+    return MergeDecision.model_validate(row)
+
+
+def _provider_source_rows(cursor: Any, set_id: UUID) -> list[dict[str, Any]]:
+    rows = cursor.execute(
+        """
+        select
+          provider_items.id as provider_item_id,
+          providers.key as provider_key,
+          provider_items.external_id,
+          provider_items.canonical_url,
+          provider_items.embed_url,
+          provider_items.raw_metadata,
+          links.is_primary
+        from set_provider_items links
+        join provider_items
+          on provider_items.id = links.provider_item_id
+        join providers on providers.id = provider_items.provider_id
+        where links.set_id = %s
+          and links.relationship = 'source'
+        order by links.is_primary desc, providers.key, provider_items.external_id
+        """,
+        (set_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _merge_state(cursor: Any, candidate: dict[str, Any]) -> dict[str, Any]:
+    source = cursor.execute(
+        """
+        select id, review_status, merged_into_id
+        from sets where id = %s
+        """,
+        (candidate["source_set_id"],),
+    ).fetchone()
+    target = cursor.execute(
+        """
+        select id, review_status, merged_into_id
+        from sets where id = %s
+        """,
+        (candidate["target_set_id"],),
+    ).fetchone()
+    if source is None or target is None:
+        raise ValueError("merge candidate set not found")
+
+    def serialized_sources(set_id: UUID) -> list[dict[str, Any]]:
+        return [
+            {
+                **row,
+                "provider_item_id": str(row["provider_item_id"]),
+            }
+            for row in _provider_source_rows(cursor, set_id)
+        ]
+
+    return {
+        "source_set_id": str(source["id"]),
+        "target_set_id": str(target["id"]),
+        "source_review_status": source["review_status"],
+        "source_duplicate_of_id": (
+            str(source["merged_into_id"])
+            if source["merged_into_id"] is not None
+            else None
+        ),
+        "source_provider_items": serialized_sources(source["id"]),
+        "target_provider_items": serialized_sources(target["id"]),
+    }
 
 
 class PostgresRepository:
@@ -570,18 +670,18 @@ class PostgresRepository:
     def find_duplicate(
         self, payload: RawSetPayload, fingerprint: str
     ) -> UUID | None:
+        del fingerprint
         with self.pool.connection() as connection:
             with connection.cursor() as cursor:
                 row = cursor.execute(
                     """
                     select id from sets
                     where (source = %s and source_id = %s)
-                       or canonical_url = %s
-                       or raw_payload->>'duplicate_fingerprint' = %s
+                       or (source = %s and canonical_url = %s)
                     order by
                         case
                             when source = %s and source_id = %s then 0
-                            when canonical_url = %s then 1
+                            when source = %s and canonical_url = %s then 1
                             else 2
                         end,
                         created_at
@@ -590,10 +690,11 @@ class PostgresRepository:
                     (
                         payload.source.value,
                         payload.source_id,
+                        payload.source.value,
                         payload.canonical_url,
-                        fingerprint,
                         payload.source.value,
                         payload.source_id,
+                        payload.source.value,
                         payload.canonical_url,
                     ),
                 ).fetchone()
@@ -627,7 +728,7 @@ class PostgresRepository:
                             f"source:{payload.source.value}:"
                             f"{payload.source_id}"
                         ),
-                        f"url:{payload.canonical_url}",
+                        f"url:{payload.source.value}:{payload.canonical_url}",
                     )
                 )
                 for identity in admitted_identities:
@@ -658,12 +759,11 @@ class PostgresRepository:
                     """
                     select id from sets
                     where (source = %s and source_id = %s)
-                       or canonical_url = %s
-                       or raw_payload->>'duplicate_fingerprint' = %s
+                       or (source = %s and canonical_url = %s)
                     order by
                         case
                             when source = %s and source_id = %s then 0
-                            when canonical_url = %s then 1
+                            when source = %s and canonical_url = %s then 1
                             else 2
                         end,
                         created_at
@@ -672,10 +772,11 @@ class PostgresRepository:
                     (
                         payload.source.value,
                         payload.source_id,
+                        payload.source.value,
                         payload.canonical_url,
-                        fingerprint,
                         payload.source.value,
                         payload.source_id,
+                        payload.source.value,
                         payload.canonical_url,
                     ),
                 ).fetchone()
@@ -1284,6 +1385,514 @@ class PostgresRepository:
                 ).fetchone()
         return ProviderItemPayload.model_validate(row) if row else None
 
+    def list_set_provider_sources(
+        self,
+        set_id: UUID,
+    ) -> list[SetProviderSource]:
+        with self.pool.connection() as connection:
+            with connection.cursor() as cursor:
+                rows = _provider_source_rows(cursor, set_id)
+        return [
+            SetProviderSource.model_validate(
+                {
+                    key: value
+                    for key, value in row.items()
+                    if key != "provider_item_id"
+                }
+            )
+            for row in rows
+        ]
+
+    def create_merge_candidate(
+        self,
+        *,
+        source_set_id: UUID,
+        target_set_id: UUID,
+        score: MergeScore,
+    ) -> MergeCandidate:
+        if source_set_id == target_set_id:
+            raise ValueError("merge candidate requires two sets")
+        pair = sorted((str(source_set_id), str(target_set_id)))
+        with self.pool.connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "select pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                    (f"merge:{pair[0]}:{pair[1]}",),
+                )
+                rows = cursor.execute(
+                    """
+                    select
+                      sets.id,
+                      sets.merged_into_id,
+                      providers.key as provider_key
+                    from sets
+                    left join set_provider_items links
+                      on links.set_id = sets.id
+                     and links.relationship = 'source'
+                     and links.is_primary
+                    left join provider_items
+                      on provider_items.id = links.provider_item_id
+                    left join providers
+                      on providers.id = provider_items.provider_id
+                    where sets.id in (%s, %s)
+                    for update of sets
+                    """,
+                    (source_set_id, target_set_id),
+                ).fetchall()
+                if len(rows) != 2:
+                    raise KeyError("merge candidate set not found")
+                if any(row["merged_into_id"] is not None for row in rows):
+                    raise ValueError("merged sets cannot be suggested")
+                provider_keys = {row["provider_key"] for row in rows}
+                if None in provider_keys or len(provider_keys) != 2:
+                    raise ValueError("merge candidates must be cross-provider")
+                existing = cursor.execute(
+                    """
+                    select * from merge_candidates
+                    where least(source_set_id, target_set_id) = %s
+                      and greatest(source_set_id, target_set_id) = %s
+                    """,
+                    (
+                        UUID(pair[0]),
+                        UUID(pair[1]),
+                    ),
+                ).fetchone()
+                if existing is not None:
+                    return _merge_candidate(existing)
+                row = cursor.execute(
+                    """
+                    insert into merge_candidates (
+                      source_set_id, target_set_id, score,
+                      component_scores, reasons
+                    ) values (%s, %s, %s, %s, %s)
+                    returning *
+                    """,
+                    (
+                        source_set_id,
+                        target_set_id,
+                        score.score,
+                        Jsonb(score.components.model_dump(mode="json")),
+                        Jsonb(score.reasons),
+                    ),
+                ).fetchone()
+        return _merge_candidate(row)
+
+    def suggest_merge_candidates(
+        self,
+        set_id: UUID,
+    ) -> list[MergeCandidate]:
+        source = self.get_set(set_id)
+        if source is None or source.duplicate_of_id is not None:
+            return []
+        with self.pool.connection() as connection:
+            with connection.cursor() as cursor:
+                def artist_aliases(candidate_set_id: UUID) -> list[str]:
+                    rows = cursor.execute(
+                        """
+                        select distinct alias_value
+                        from set_artists
+                        join artists on artists.id = set_artists.artist_id
+                        cross join lateral jsonb_array_elements_text(
+                          artists.aliases
+                        ) as expanded(alias_value)
+                        where set_artists.set_id = %s
+                        order by alias_value
+                        """,
+                        (candidate_set_id,),
+                    ).fetchall()
+                    return [row["alias_value"] for row in rows]
+
+                source = source.model_copy(
+                    update={
+                        "raw_payload": {
+                            **source.raw_payload,
+                            "artist_aliases": artist_aliases(set_id),
+                        }
+                    }
+                )
+                source_provider = cursor.execute(
+                    """
+                    select providers.key
+                    from set_provider_items links
+                    join provider_items
+                      on provider_items.id = links.provider_item_id
+                    join providers on providers.id = provider_items.provider_id
+                    where links.set_id = %s
+                      and links.relationship = 'source'
+                      and links.is_primary
+                    """,
+                    (set_id,),
+                ).fetchone()
+                if source_provider is None:
+                    return []
+                rows = cursor.execute(
+                    """
+                    select sets.id
+                    from sets
+                    join set_provider_items links
+                      on links.set_id = sets.id
+                     and links.relationship = 'source'
+                     and links.is_primary
+                    join provider_items
+                      on provider_items.id = links.provider_item_id
+                    join providers on providers.id = provider_items.provider_id
+                    where sets.id <> %s
+                      and sets.merged_into_id is null
+                      and providers.key <> %s
+                    order by sets.created_at, sets.id
+                    """,
+                    (set_id, source_provider["key"]),
+                ).fetchall()
+        suggestions: list[MergeCandidate] = []
+        for row in rows:
+            target = self.get_set(row["id"])
+            if target is None:
+                continue
+            with self.pool.connection() as connection:
+                with connection.cursor() as cursor:
+                    alias_rows = cursor.execute(
+                        """
+                        select distinct alias_value
+                        from set_artists
+                        join artists on artists.id = set_artists.artist_id
+                        cross join lateral jsonb_array_elements_text(
+                          artists.aliases
+                        ) as expanded(alias_value)
+                        where set_artists.set_id = %s
+                        order by alias_value
+                        """,
+                        (target.id,),
+                    ).fetchall()
+            target = target.model_copy(
+                update={
+                    "raw_payload": {
+                        **target.raw_payload,
+                        "artist_aliases": [
+                            item["alias_value"] for item in alias_rows
+                        ],
+                    }
+                }
+            )
+            score = score_set_merge(source, target)
+            if score.score < MERGE_SUGGESTION_THRESHOLD:
+                continue
+            suggestions.append(
+                self.create_merge_candidate(
+                    source_set_id=set_id,
+                    target_set_id=target.id,
+                    score=score,
+                )
+            )
+        return suggestions
+
+    def list_merge_candidates(
+        self,
+        *,
+        status: MergeCandidateStatus | None,
+        limit: int,
+        offset: int,
+    ) -> MergeCandidatePage:
+        filters: list[str] = []
+        params: list[Any] = []
+        if status is not None:
+            filters.append("status = %s")
+            params.append(status.value)
+        where = f"where {' and '.join(filters)}" if filters else ""
+        with self.pool.connection() as connection:
+            with connection.cursor() as cursor:
+                total = cursor.execute(
+                    f"select count(*) as count from merge_candidates {where}",
+                    params,
+                ).fetchone()["count"]
+                rows = cursor.execute(
+                    f"""
+                    select * from merge_candidates
+                    {where}
+                    order by score desc, created_at desc, id desc
+                    limit %s offset %s
+                    """,
+                    (*params, limit, offset),
+                ).fetchall()
+        return MergeCandidatePage(
+            items=[_merge_candidate(row) for row in rows],
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
+
+    def get_merge_candidate(
+        self,
+        candidate_id: UUID,
+    ) -> MergeCandidate | None:
+        with self.pool.connection() as connection:
+            with connection.cursor() as cursor:
+                row = cursor.execute(
+                    "select * from merge_candidates where id = %s",
+                    (candidate_id,),
+                ).fetchone()
+        return _merge_candidate(row) if row is not None else None
+
+    def list_merge_decisions(
+        self,
+        candidate_id: UUID,
+    ) -> list[MergeDecision]:
+        with self.pool.connection() as connection:
+            with connection.cursor() as cursor:
+                rows = cursor.execute(
+                    """
+                    select * from merge_decisions
+                    where merge_candidate_id = %s
+                    order by created_at, id
+                    """,
+                    (candidate_id,),
+                ).fetchall()
+        return [_merge_decision(row) for row in rows]
+
+    def approve_merge_candidate(
+        self,
+        candidate_id: UUID,
+        *,
+        actor: str,
+    ) -> MergeCandidate | None:
+        with self.pool.connection() as connection:
+            with connection.cursor() as cursor:
+                candidate = cursor.execute(
+                    "select * from merge_candidates where id = %s for update",
+                    (candidate_id,),
+                ).fetchone()
+                if candidate is None or candidate["status"] != "pending":
+                    return None
+                sets = cursor.execute(
+                    """
+                    select id, merged_into_id from sets
+                    where id in (%s, %s)
+                    for update
+                    """,
+                    (
+                        candidate["source_set_id"],
+                        candidate["target_set_id"],
+                    ),
+                ).fetchall()
+                if len(sets) != 2 or any(
+                    row["merged_into_id"] is not None for row in sets
+                ):
+                    return None
+                before = _merge_state(cursor, candidate)
+                source_links = _provider_source_rows(
+                    cursor,
+                    candidate["source_set_id"],
+                )
+                if not source_links:
+                    return None
+                for link in source_links:
+                    cursor.execute(
+                        """
+                        insert into set_provider_items (
+                          set_id, provider_item_id, relationship, is_primary
+                        ) values (%s, %s, 'source', false)
+                        on conflict (set_id, provider_item_id, relationship)
+                        do nothing
+                        """,
+                        (
+                            candidate["target_set_id"],
+                            link["provider_item_id"],
+                        ),
+                    )
+                cursor.execute(
+                    """
+                    delete from set_provider_items
+                    where set_id = %s and relationship = 'source'
+                    """,
+                    (candidate["source_set_id"],),
+                )
+                cursor.execute(
+                    """
+                    update sets
+                    set merged_into_id = %s, merged_at = now(),
+                        review_status = 'rejected'
+                    where id = %s
+                    """,
+                    (
+                        candidate["target_set_id"],
+                        candidate["source_set_id"],
+                    ),
+                )
+                row = cursor.execute(
+                    """
+                    update merge_candidates
+                    set status = 'approved', reviewed_by = %s,
+                        reviewed_at = now()
+                    where id = %s
+                    returning *
+                    """,
+                    (actor, candidate_id),
+                ).fetchone()
+                after = _merge_state(cursor, row)
+                cursor.execute(
+                    """
+                    insert into merge_decisions (
+                      merge_candidate_id, action, actor,
+                      before_state, after_state
+                    ) values (%s, 'approve', %s, %s, %s)
+                    """,
+                    (candidate_id, actor, Jsonb(before), Jsonb(after)),
+                )
+        return _merge_candidate(row)
+
+    def reject_merge_candidate(
+        self,
+        candidate_id: UUID,
+        *,
+        actor: str,
+    ) -> MergeCandidate | None:
+        with self.pool.connection() as connection:
+            with connection.cursor() as cursor:
+                candidate = cursor.execute(
+                    "select * from merge_candidates where id = %s for update",
+                    (candidate_id,),
+                ).fetchone()
+                if candidate is None or candidate["status"] != "pending":
+                    return None
+                before = _merge_state(cursor, candidate)
+                row = cursor.execute(
+                    """
+                    update merge_candidates
+                    set status = 'rejected', reviewed_by = %s,
+                        reviewed_at = now()
+                    where id = %s
+                    returning *
+                    """,
+                    (actor, candidate_id),
+                ).fetchone()
+                after = _merge_state(cursor, row)
+                cursor.execute(
+                    """
+                    insert into merge_decisions (
+                      merge_candidate_id, action, actor,
+                      before_state, after_state
+                    ) values (%s, 'reject', %s, %s, %s)
+                    """,
+                    (candidate_id, actor, Jsonb(before), Jsonb(after)),
+                )
+        return _merge_candidate(row)
+
+    def restore_merge_candidate(
+        self,
+        candidate_id: UUID,
+        *,
+        actor: str,
+    ) -> MergeCandidate | None:
+        with self.pool.connection() as connection:
+            with connection.cursor() as cursor:
+                candidate = cursor.execute(
+                    "select * from merge_candidates where id = %s for update",
+                    (candidate_id,),
+                ).fetchone()
+                if candidate is None or candidate["status"] != "approved":
+                    return None
+                sets = cursor.execute(
+                    """
+                    select id, merged_into_id from sets
+                    where id in (%s, %s) for update
+                    """,
+                    (
+                        candidate["source_set_id"],
+                        candidate["target_set_id"],
+                    ),
+                ).fetchall()
+                by_id = {item["id"]: item for item in sets}
+                source_set = by_id.get(candidate["source_set_id"])
+                target_set = by_id.get(candidate["target_set_id"])
+                if (
+                    source_set is None
+                    or target_set is None
+                    or source_set["merged_into_id"]
+                    != candidate["target_set_id"]
+                    or target_set["merged_into_id"] is not None
+                ):
+                    return None
+                approval = cursor.execute(
+                    """
+                    select * from merge_decisions
+                    where merge_candidate_id = %s and action = 'approve'
+                    order by created_at desc, id desc
+                    limit 1
+                    """,
+                    (candidate_id,),
+                ).fetchone()
+                if approval is None:
+                    return None
+                before = _merge_state(cursor, candidate)
+                original_source = approval["before_state"][
+                    "source_provider_items"
+                ]
+                original_target = approval["before_state"][
+                    "target_provider_items"
+                ]
+                target_before_ids = {
+                    item["provider_item_id"] for item in original_target
+                }
+                for item in original_source:
+                    provider_item_id = UUID(item["provider_item_id"])
+                    if item["provider_item_id"] not in target_before_ids:
+                        cursor.execute(
+                            """
+                            delete from set_provider_items
+                            where set_id = %s
+                              and provider_item_id = %s
+                              and relationship = 'source'
+                            """,
+                            (candidate["target_set_id"], provider_item_id),
+                        )
+                    cursor.execute(
+                        """
+                        insert into set_provider_items (
+                          set_id, provider_item_id, relationship, is_primary
+                        ) values (%s, %s, 'source', %s)
+                        on conflict (set_id, provider_item_id, relationship)
+                        do update set is_primary = excluded.is_primary
+                        """,
+                        (
+                            candidate["source_set_id"],
+                            provider_item_id,
+                            item["is_primary"],
+                        ),
+                    )
+                cursor.execute(
+                    """
+                    update sets
+                    set merged_into_id = null, merged_at = null,
+                        review_status = %s
+                    where id = %s and merged_into_id = %s
+                    """,
+                    (
+                        approval["before_state"]["source_review_status"],
+                        candidate["source_set_id"],
+                        candidate["target_set_id"],
+                    ),
+                )
+                row = cursor.execute(
+                    """
+                    update merge_candidates
+                    set status = 'restored', reviewed_by = %s,
+                        reviewed_at = now()
+                    where id = %s
+                    returning *
+                    """,
+                    (actor, candidate_id),
+                ).fetchone()
+                after = _merge_state(cursor, row)
+                cursor.execute(
+                    """
+                    insert into merge_decisions (
+                      merge_candidate_id, action, actor,
+                      before_state, after_state
+                    ) values (%s, 'restore', %s, %s, %s)
+                    """,
+                    (candidate_id, actor, Jsonb(before), Jsonb(after)),
+                )
+        return _merge_candidate(row)
+
     def list_sets(
         self,
         *,
@@ -1294,7 +1903,7 @@ class PostgresRepository:
         limit: int,
         offset: int,
     ) -> SetPage:
-        filters: list[str] = []
+        filters: list[str] = ["s.merged_into_id is null"]
         params: list[Any] = []
         if source is not None:
             filters.append("s.source = %s")
@@ -1684,15 +2293,19 @@ class PostgresRepository:
         with self.pool.connection() as connection:
             with connection.cursor() as cursor:
                 total = cursor.execute(
-                    "select count(*) as total from sets"
+                    "select count(*) as total from sets where merged_into_id is null"
                 ).fetchone()["total"]
                 by_source_rows = cursor.execute(
-                    "select source, count(*) as count from sets group by source"
+                    """
+                    select source, count(*) as count from sets
+                    where merged_into_id is null group by source
+                    """
                 ).fetchall()
                 by_status_rows = cursor.execute(
                     """
                     select review_status, count(*) as count
-                    from sets group by review_status
+                    from sets where merged_into_id is null
+                    group by review_status
                     """
                 ).fetchall()
                 score = cursor.execute(
@@ -1701,7 +2314,7 @@ class PostgresRepository:
                       count(*) filter (where set_score >= 0.7) as high,
                       count(*) filter (where set_score >= 0.4 and set_score < 0.7) as review,
                       count(*) filter (where set_score < 0.4) as low
-                    from sets
+                    from sets where merged_into_id is null
                     """
                 ).fetchone()
                 queue_rows = cursor.execute(

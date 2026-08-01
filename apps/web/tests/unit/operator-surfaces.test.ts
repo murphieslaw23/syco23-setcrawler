@@ -44,6 +44,26 @@ describe('operator surfaces', () => {
     expect(source).toContain('DashboardSoundCloudImport')
   })
 
+  it('provides explainable side-by-side canonical merge review', () => {
+    const source = readFileSync(`${root}/pages/merge-candidates/index.vue`, 'utf8')
+    for (const evidence of [
+      '/merge-candidates',
+      '/sets/${candidate.source_set_id}',
+      '/sets/${candidate.target_set_id}',
+      '/sources',
+      'component_scores.title_artist',
+      'component_scores.event',
+      'component_scores.date_year',
+      'component_scores.duration',
+      'component_scores.aliases',
+      'Approve merge',
+      'Keep separate',
+      'Restore merge'
+    ]) {
+      expect(source).toContain(evidence)
+    }
+  })
+
   it('mounts the dashboard SoundCloud action with viewer and failure states', async () => {
     const { default: DashboardSoundCloudImport } = await import(
       '../../components/DashboardSoundCloudImport.vue'

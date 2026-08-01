@@ -87,7 +87,7 @@ def process_payload(
         payload.title,
         payload.description,
     )
-    return repository.persist_processed_set(
+    persisted_id = repository.persist_processed_set(
         payload=payload,
         score=score,
         candidates=candidates,
@@ -95,3 +95,6 @@ def process_payload(
         fingerprint=fingerprint,
         claim_started_at=owner_token,
     )
+    if persisted_id is not None:
+        repository.suggest_merge_candidates(persisted_id)
+    return persisted_id
