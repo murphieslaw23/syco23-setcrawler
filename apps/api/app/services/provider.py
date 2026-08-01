@@ -7,6 +7,7 @@ from typing import Any, Protocol
 from app.core.config import Settings, get_settings
 from app.services.normalizer import RawSetPayload
 from app.services.provider_contracts import (
+    AuthorizedAudioCandidate,
     DiscoveryPage,
     DiscoveryRequest,
     ProviderCapability,
@@ -58,6 +59,53 @@ def _item_payload(
     creator = payload.raw_payload.get("channelTitle")
     if creator is None:
         creator = payload.raw_payload.get("uploader")
+    provenance: dict[str, Any] = {"legacy_source": payload.source.value}
+    download_candidates: tuple[AuthorizedAudioCandidate, ...] = ()
+    if provider_key == "soundcloud":
+        from urllib.parse import urlsplit
+
+        from app.services.provider_adapter_support import permissive_license
+
+        official_download = payload.raw_payload.get("downloadable") is True
+        provenance["official_download_available"] = official_download
+        download_url = payload.raw_payload.get("download_url")
+        resolved_license = permissive_license(payload.raw_payload.get("license"))
+        if (
+            official_download
+            and isinstance(download_url, str)
+            and resolved_license is not None
+        ):
+            parsed_download = urlsplit(download_url)
+            if (
+                parsed_download.scheme.casefold() == "https"
+                and (parsed_download.hostname or "").casefold()
+                == "api.soundcloud.com"
+                and parsed_download.username is None
+                and parsed_download.password is None
+                and parsed_download.port is None
+                and not parsed_download.fragment
+            ):
+                license_name, license_url = resolved_license
+                download_candidates = (
+                    AuthorizedAudioCandidate(
+                        provider_key="soundcloud",
+                        external_id=payload.source_id,
+                        source_url=download_url,
+                        evidence_references=(payload.canonical_url, license_url),
+                        evidence={
+                            "license": license_name,
+                            "license_url": license_url,
+                            "official_download": True,
+                            "policy": "reference_only_no_fetch",
+                        },
+                    ),
+                )
+                if license_evidence is None:
+                    license_evidence = {
+                        "license": license_name,
+                        "license_url": license_url,
+                        "policy": "explicit_permissive_license",
+                    }
     return ProviderItemPayload(
         provider_key=provider_key,
         external_id=payload.source_id,
@@ -68,8 +116,9 @@ def _item_payload(
         creator_name=str(creator) if creator else None,
         embed_url=embed_url,
         artwork_candidates=artwork,
+        download_candidates=download_candidates,
         raw_metadata=payload.raw_payload,
-        provenance={"legacy_source": payload.source.value},
+        provenance=provenance,
         license_evidence=license_evidence,
     )
 

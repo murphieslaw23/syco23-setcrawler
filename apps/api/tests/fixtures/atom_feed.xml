@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Fixture Sets</title>
+  <id>https://feeds.example/atom</id>
+  <entry>
+    <id>tag:feeds.example,2026:warehouse-set-24</id>
+    <title>Warehouse Set 24</title>
+    <link rel="alternate" href="https://feeds.example/sets/warehouse-set-24" />
+    <link
+      rel="enclosure"
+      href="https://cdn.feeds.example/audio/warehouse-set-24.ogg"
+      type="audio/ogg"
+      length="24000000"
+    />
+    <author><name>DJ Fixture</name></author>
+    <published>2026-07-24T20:00:00Z</published>
+  </entry>
+</feed>

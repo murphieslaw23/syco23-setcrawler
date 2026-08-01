@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Fixture Sets</title>
+    <link>https://feeds.example/sets</link>
+    <item>
+      <guid isPermaLink="false">fixture-set-23</guid>
+      <title>Warehouse Set 23</title>
+      <link>https://feeds.example/sets/warehouse-set-23</link>
+      <author>DJ Fixture</author>
+      <pubDate>Thu, 23 Jul 2026 20:00:00 GMT</pubDate>
+      <enclosure
+        url="https://cdn.feeds.example/audio/warehouse-set-23.mp3"
+        length="23000000"
+        type="audio/mpeg"
+      />
+    </item>
+  </channel>
+</rss>

@@ -1,0 +1,15 @@
+{
+  "response": {
+    "numFound": 1,
+    "start": 0,
+    "docs": [
+      {
+        "identifier": "warehouse-set-23",
+        "title": "Warehouse Set 23",
+        "creator": "DJ Fixture",
+        "date": "2026-07-23T20:00:00Z",
+        "licenseurl": "https://creativecommons.org/licenses/by/4.0/"
+      }
+    ]
+  }
+}
