@@ -7,7 +7,7 @@ from app.repositories.base import Repository
 from app.services.provider_contracts import ProviderCapability
 from app.services.provider_health import descriptor_runtime_state
 from app.services.provider_registry import ProviderRegistry, ProviderRegistryError
-from app.services.cron_schedule import cron_matches, next_cron_time
+from app.services.cron_schedule import cron_matches, next_cron_time, previous_cron_time
 from app.workers.dispatch import JobDispatcher
 from app.workers.celery_app import celery_app
 
@@ -25,11 +25,21 @@ def schedule_due_profiles(
     for profile in repository.list_profiles():
         if not profile.enabled:
             continue
-        due = (
-            profile.next_scheduled_at <= current
-            if profile.next_scheduled_at is not None
-            else cron_matches(profile.schedule_cron, current)
-        )
+        if profile.next_scheduled_at is not None:
+            due = profile.next_scheduled_at <= current
+        elif cron_matches(
+            profile.schedule_cron,
+            current,
+            timezone=profile.schedule_timezone,
+        ):
+            due = True
+        else:
+            previous = previous_cron_time(
+                profile.schedule_cron,
+                current,
+                timezone=profile.schedule_timezone,
+            )
+            due = profile.created_at.astimezone(UTC) <= previous
         if not due:
             continue
         counts["due"] += 1
@@ -58,7 +68,11 @@ def schedule_due_profiles(
         repository.mark_profile_scheduled(
             profile.id,
             scheduled_at=current,
-            next_scheduled_at=next_cron_time(profile.schedule_cron, current),
+            next_scheduled_at=next_cron_time(
+                profile.schedule_cron,
+                current,
+                timezone=profile.schedule_timezone,
+            ),
         )
     return counts
 

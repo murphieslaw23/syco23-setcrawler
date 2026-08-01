@@ -100,6 +100,7 @@ class Repository(Protocol):
         input_page_token: str | None,
         next_page_token: str | None,
         payloads: list[RawSetPayload],
+        checkpoint_key: str = "youtube_page_checkpoint",
     ) -> ImportJob | None: ...
 
     def get_or_create_child_job(

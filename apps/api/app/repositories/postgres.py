@@ -32,6 +32,7 @@ from app.services.normalizer import RawSetPayload
 from app.services.provider_sources import (
     SourceIntegrityError,
     legacy_source_to_provider_key,
+    provider_key_to_legacy_source,
     sanitize_provider_metadata,
     validate_source_projection,
 )
@@ -884,6 +885,7 @@ class PostgresRepository:
         input_page_token: str | None,
         next_page_token: str | None,
         payloads: list[RawSetPayload],
+        checkpoint_key: str = "youtube_page_checkpoint",
     ) -> ImportJob | None:
         checkpoint = {
             "input_page_token": input_page_token,
@@ -908,7 +910,7 @@ class PostgresRepository:
                 ).fetchone()
                 if current is None:
                     return None
-                if "youtube_page_checkpoint" in current["details"]:
+                if checkpoint_key in current["details"]:
                     return _job(current)
                 row = cursor.execute(
                     """
@@ -921,7 +923,7 @@ class PostgresRepository:
                     """,
                     (
                         Jsonb(
-                            {"youtube_page_checkpoint": checkpoint}
+                            {checkpoint_key: checkpoint}
                         ),
                         job_id,
                         claim_started_at,
@@ -1330,8 +1332,8 @@ class PostgresRepository:
                     """
                     insert into search_profiles (
                         name, query, source, operation, parameters,
-                        schedule_cron, enabled
-                    ) values (%s, %s, %s, %s, %s, %s, %s)
+                        schedule_cron, schedule_timezone, enabled
+                    ) values (%s, %s, %s, %s, %s, %s, %s, %s)
                     returning *
                     """,
                     (
@@ -1341,6 +1343,7 @@ class PostgresRepository:
                         payload.operation,
                         Jsonb(payload.parameters),
                         payload.schedule_cron,
+                        payload.schedule_timezone,
                         payload.enabled,
                     ),
                 ).fetchone()
@@ -1352,7 +1355,13 @@ class PostgresRepository:
         changes = payload.model_dump(exclude_none=True)
         if not changes:
             return self.get_profile(profile_id)
+        schedule_changed = (
+            "schedule_cron" in changes
+            or "schedule_timezone" in changes
+        )
         assignments = ", ".join(f"{field} = %s" for field in changes)
+        if schedule_changed:
+            assignments += ", next_scheduled_at = null"
         with self.pool.connection() as connection:
             with connection.cursor() as cursor:
                 row = cursor.execute(
@@ -1439,11 +1448,12 @@ class PostgresRepository:
                     """
                     insert into import_jobs (
                         input_url, source, job_type, search_profile_id, details
-                    ) values (%s, 'youtube', 'search_profile', %s, %s)
+                    ) values (%s, %s, 'search_profile', %s, %s)
                     returning *
                     """,
                     (
                         f"{profile['source']}-{profile['operation']}://{profile['query']}",
+                        provider_key_to_legacy_source(profile["source"]).value,
                         profile_id,
                         Jsonb(
                             {

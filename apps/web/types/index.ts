@@ -109,6 +109,7 @@ export interface SearchProfile {
   operation: string
   parameters: Record<string, unknown>
   schedule_cron: string
+  schedule_timezone: string
   last_run_at: string | null
   last_scheduled_at: string | null
   next_scheduled_at: string | null

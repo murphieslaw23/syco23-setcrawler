@@ -17,6 +17,7 @@ useOperationalLoad(ready, loadProfiles)
 const name = ref('')
 const query = ref('')
 const schedule = ref('0 6 * * *')
+const scheduleTimezone = ref('UTC')
 const message = ref('')
 const actionError = ref('')
 const busyId = ref<string | null>(null)
@@ -30,7 +31,7 @@ async function addProfile() {
   message.value = ''
   try {
     requireAdmin()
-    const created = await send<SearchProfile>('/search-profiles', 'POST', { name: name.value.trim(), query: query.value.trim(), schedule_cron: schedule.value, enabled: true })
+    const created = await send<SearchProfile>('/search-profiles', 'POST', { name: name.value.trim(), query: query.value.trim(), schedule_cron: schedule.value, schedule_timezone: scheduleTimezone.value.trim(), enabled: true })
     profiles.value = [...(profiles.value || []), created]
     name.value = ''
     query.value = ''
@@ -40,7 +41,7 @@ async function addProfile() {
   }
 }
 
-async function update(profile: SearchProfile, patch: Partial<Pick<SearchProfile, 'name' | 'query' | 'schedule_cron' | 'enabled'>>) {
+async function update(profile: SearchProfile, patch: Partial<Pick<SearchProfile, 'name' | 'query' | 'schedule_cron' | 'schedule_timezone' | 'enabled'>>) {
   actionError.value = ''
   busyId.value = profile.id
   try {
@@ -94,23 +95,24 @@ async function run(profile: SearchProfile) {
     <p v-if="actionError" class="form-message error" role="alert">{{ actionError }}</p>
     <div class="profile-layout">
       <section class="plate">
-        <div class="section-heading"><div><p class="utility-label">Daily profiles</p><h2>Active queries</h2></div><span>{{ profiles?.filter((item) => item.enabled).length }} enabled</span></div>
+        <div class="section-heading"><div><p class="utility-label">Scheduled profiles</p><h2>Active queries</h2></div><span>{{ profiles?.filter((item) => item.enabled).length }} enabled</span></div>
         <article v-for="profile in profiles" :key="profile.id" class="profile-row">
           <span class="profile-state" :class="{ off: !profile.enabled }" />
           <div class="profile-row__fields"><label>Name<input v-model="profile.name" :disabled="!isAdmin" aria-label="Profile name"></label><label>Search query<input v-model="profile.query" :disabled="!isAdmin" aria-label="Profile search query"></label></div>
-          <input v-model="profile.schedule_cron" class="profile-cron" :disabled="!isAdmin" aria-label="Schedule cron">
+          <div class="profile-schedule"><label>Schedule<input v-model="profile.schedule_cron" class="profile-cron" :disabled="!isAdmin" aria-label="Schedule cron"></label><label>Timezone<input v-model="profile.schedule_timezone" :disabled="!isAdmin" aria-label="Schedule timezone"></label></div>
           <label class="profile-enabled"><input :checked="profile.enabled" type="checkbox" :disabled="!isAdmin || busyId === profile.id" @change="update(profile, { enabled: ($event.target as HTMLInputElement).checked })"> enabled</label>
           <dl class="profile-run-state">
             <div><dt>Last run</dt><dd>{{ profile.last_run_at ? formatDate(profile.last_run_at) : 'Never' }}</dd></div>
             <div><dt>Last scheduled</dt><dd>{{ profile.last_scheduled_at ? formatDate(profile.last_scheduled_at) : 'Never' }}</dd></div>
             <div><dt>Next scheduled</dt><dd>{{ profile.next_scheduled_at ? formatDate(profile.next_scheduled_at) : 'Pending' }}</dd></div>
+            <div><dt>Timezone</dt><dd>{{ profile.schedule_timezone }}</dd></div>
             <div><dt>Results</dt><dd>{{ profile.last_result_count ?? '—' }}</dd></div>
             <div><dt>Next page</dt><dd>{{ profile.next_page_token || 'Start' }}</dd></div>
           </dl>
           <p v-if="profile.last_error_code" class="form-message error" role="alert">Profile error: {{ profile.last_error_code }}</p>
           <NuxtLink v-if="profile.latest_job_id" class="text-button" :to="`/imports#job-${profile.latest_job_id}`">Latest job {{ profile.latest_job_id }}</NuxtLink>
           <div class="profile-row__actions">
-            <button v-if="isAdmin" class="text-button" type="button" :disabled="busyId === profile.id" @click="update(profile, { name: profile.name, query: profile.query, schedule_cron: profile.schedule_cron })">Save</button>
+            <button v-if="isAdmin" class="text-button" type="button" :disabled="busyId === profile.id" @click="update(profile, { name: profile.name, query: profile.query, schedule_cron: profile.schedule_cron, schedule_timezone: profile.schedule_timezone })">Save</button>
             <button v-if="isAdmin" class="secondary-button" type="button" :disabled="busyId === profile.id" @click="run(profile)">Run now</button>
             <button v-if="isAdmin" class="danger-button" type="button" :disabled="busyId === profile.id" @click="remove(profile)">Delete</button>
           </div>
@@ -121,6 +123,7 @@ async function run(profile: SearchProfile) {
         <label>Name<input v-model="name" required placeholder="Crew or genre profile"></label>
         <label>Search query<input v-model="query" required placeholder="freetekno liveset"></label>
         <label>Schedule<input v-model="schedule" required></label>
+        <label>Timezone<input v-model="scheduleTimezone" required placeholder="UTC"></label>
         <button class="primary-button" type="submit">Create profile</button>
       </form>
       <aside v-else class="plate access-note"><p class="utility-label">Read only</p><h2>Admin controls locked</h2><p>Provider configuration and manual runs are limited to administrators.</p></aside>

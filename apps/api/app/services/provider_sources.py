@@ -45,6 +45,15 @@ def legacy_source_to_provider_key(source: SetSource | str) -> str:
         raise SourceIntegrityError("source projection has an unknown legacy source") from error
 
 
+def provider_key_to_legacy_source(provider_key: str) -> SetSource:
+    for legacy_source, key in _LEGACY_PROVIDER_KEYS.items():
+        if key == provider_key:
+            return legacy_source
+    # ImportJob.source remains a closed v0.2 compatibility field. Routing uses
+    # the descriptor key stored in details, so new providers stay extensible.
+    return SetSource.youtube
+
+
 def validate_source_projection(
     *,
     legacy_source: SetSource | str,

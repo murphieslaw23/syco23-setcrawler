@@ -31,6 +31,7 @@ from app.services.normalizer import RawSetPayload
 from app.services.provider_sources import (
     ProviderSourceProjection,
     legacy_source_to_provider_key,
+    provider_key_to_legacy_source,
     sanitize_provider_metadata,
     validate_source_projection,
 )
@@ -773,7 +774,10 @@ class InMemoryRepository:
         profile = self.profiles.get(profile_id)
         if not profile or profile_id in self._deleted_profile_ids:
             return None
-        updated = profile.model_copy(update=payload.model_dump(exclude_none=True))
+        changes = payload.model_dump(exclude_none=True)
+        if "schedule_cron" in changes or "schedule_timezone" in changes:
+            changes["next_scheduled_at"] = None
+        updated = profile.model_copy(update=changes)
         self.profiles[profile_id] = updated
         return updated
 
@@ -793,6 +797,7 @@ class InMemoryRepository:
         input_page_token: str | None,
         next_page_token: str | None,
         payloads: list[RawSetPayload],
+        checkpoint_key: str = "youtube_page_checkpoint",
     ) -> ImportJob | None:
         with self._lock:
             job = self.jobs.get(job_id)
@@ -802,7 +807,7 @@ class InMemoryRepository:
                 or job.started_at != claim_started_at
             ):
                 return None
-            existing = job.details.get("youtube_page_checkpoint")
+            existing = job.details.get(checkpoint_key)
             if existing is not None:
                 return deepcopy(job)
             checkpoint = {
@@ -820,7 +825,7 @@ class InMemoryRepository:
                 update={
                     "details": {
                         **job.details,
-                        "youtube_page_checkpoint": checkpoint,
+                        checkpoint_key: checkpoint,
                     }
                 }
             )
@@ -1013,7 +1018,7 @@ class InMemoryRepository:
             return (
                 self.create_job(
                 url=f"{profile.source}-{profile.operation}://{profile.query}",
-                source=SetSource.youtube,
+                source=provider_key_to_legacy_source(profile.source),
                 job_type=JobType.search_profile,
                 profile_id=profile_id,
                 details={

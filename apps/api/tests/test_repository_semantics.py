@@ -9,6 +9,7 @@ from app.schemas import (
     JobStatus,
     JobType,
     SearchProfileCreate,
+    SearchProfileUpdate,
     SetSource,
 )
 from app.services.normalizer import RawSetPayload
@@ -144,6 +145,50 @@ def test_profile_queue_reuses_active_job() -> None:
             if job.profile_id == profile.id
         ]
     ) == 1
+
+
+def test_ftm_profile_job_uses_its_legacy_source_projection() -> None:
+    repository = InMemoryRepository()
+    profile = repository.create_profile(
+        SearchProfileCreate(
+            name="FTM source projection",
+            query="freeteknomusic metadata",
+            source="ftm",
+            operation="crawl",
+            parameters={
+                "start_url": "https://freeteknomusic.org/sets/23hz",
+            },
+        )
+    )
+
+    job = repository.queue_profile(profile.id)
+
+    assert job is not None
+    assert job.source is SetSource.freeteknomusic
+    assert job.details["provider_key"] == "ftm"
+
+
+def test_profile_schedule_change_clears_stale_next_occurrence() -> None:
+    repository = InMemoryRepository()
+    profile = repository.create_profile(
+        SearchProfileCreate(name="Timezone edit", query="timezone liveset")
+    )
+    repository.mark_profile_scheduled(
+        profile.id,
+        scheduled_at=profile.created_at,
+        next_scheduled_at=profile.created_at + timedelta(days=1),
+    )
+
+    updated = repository.update_profile(
+        profile.id,
+        SearchProfileUpdate(
+            schedule_cron="30 2 * * *",
+            schedule_timezone="Europe/Berlin",
+        ),
+    )
+
+    assert updated is not None
+    assert updated.next_scheduled_at is None
 
 
 def test_profile_queue_reuse_is_atomic_across_threads() -> None:

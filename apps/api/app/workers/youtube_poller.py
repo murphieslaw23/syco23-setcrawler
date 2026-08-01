@@ -24,102 +24,17 @@ from app.workers.normalize_worker import (
     get_worker_repository,
 )
 from app.workers.process_dispatch import dispatch_process_payload
+from app.workers.profile_jobs import (
+    ProfileOwnershipLost,
+    claim_profile_job,
+    finalize_profile_failure,
+    profile_job_counts,
+)
 from app.workers.recovery import claim_or_reschedule
 
 
 def get_youtube_adapter() -> object:
     return get_provider_registry().adapter("youtube")
-
-
-_COUNT_KEYS = (
-    "result_count",
-    "discard_count",
-    "duplicate_count",
-)
-_TERMINAL_JOB_STATUSES = {
-    JobStatus.completed,
-    JobStatus.failed,
-    JobStatus.dead_letter,
-    JobStatus.blocked,
-}
-
-
-class _OwnershipLost(RuntimeError):
-    pass
-
-
-def _job_counts(job: ImportJob) -> dict[str, int]:
-    return {
-        key: int(job.details.get(key, 0))
-        for key in _COUNT_KEYS
-    }
-
-
-def _claim_profile_job(
-    task,
-    repository: Repository,
-    job_id: UUID,
-    *,
-    claim_ttl_seconds: int,
-) -> ImportJob | None:
-    current = repository.get_job(job_id)
-    if current is None:
-        raise KeyError(f"Import job {job_id} not found")
-    if current.job_type is not JobType.search_profile:
-        raise ValueError(f"Import job {job_id} is not a search profile job")
-    if current.profile_id is None:
-        raise ValueError(f"Import job {job_id} has no search profile")
-    if current.status in _TERMINAL_JOB_STATUSES:
-        return None
-    claimed = claim_or_reschedule(
-        task,
-        repository,
-        job_id,
-        claim_ttl_seconds=claim_ttl_seconds,
-    )
-    if claimed is None:
-        current = repository.get_job(job_id)
-        if current is None:
-            raise KeyError(f"Import job {job_id} not found")
-        if current.job_type is not JobType.search_profile:
-            raise ValueError(f"Import job {job_id} is not a search profile job")
-        if current.profile_id is None:
-            raise ValueError(f"Import job {job_id} has no search profile")
-        if current.status in _TERMINAL_JOB_STATUSES:
-            return None
-        if current.status is JobStatus.processing:
-            return None
-        raise ValueError(
-            f"Import job {job_id} is not available for processing"
-        )
-    return claimed
-
-
-def _finalize_profile_failure(
-    repository: Repository,
-    job: ImportJob,
-    *,
-    error_code: str,
-    status: JobStatus = JobStatus.failed,
-) -> None:
-    if job.profile_id is None:
-        raise ValueError(f"Import job {job.id} has no search profile")
-    if job.started_at is None:
-        raise ValueError(f"Import job {job.id} has no ownership token")
-    profile = repository.get_profile(job.profile_id)
-    repository.finalize_profile_job(
-        job.id,
-        job.started_at,
-        status=status,
-        next_page_token=(
-            profile.next_page_token if profile is not None else None
-        ),
-        result_count=0,
-        discard_count=0,
-        duplicate_count=0,
-        error_code=error_code,
-        error_message=error_code,
-    )
 
 
 def _load_profile_checkpoint(
@@ -147,7 +62,7 @@ def _load_profile_checkpoint(
             payloads=fetched.payloads,
         )
         if checkpointed is None:
-            raise _OwnershipLost()
+            raise ProfileOwnershipLost()
         checkpoint = checkpointed.details.get(
             "youtube_page_checkpoint"
         )
@@ -201,7 +116,7 @@ def _process_profile(
             payload,
         )
         if child is None:
-            raise _OwnershipLost()
+            raise ProfileOwnershipLost()
         if child.status is JobStatus.completed:
             continue
         if child.status in {
@@ -274,7 +189,7 @@ def finalize_youtube_profile(
     if current is None:
         raise KeyError(f"Import job {parsed_job_id} not found")
     if current.status is JobStatus.completed:
-        return _job_counts(current)
+        return profile_job_counts(current)
     if (
         current.status is not JobStatus.processing
         or current.started_at != owner_token
@@ -374,7 +289,7 @@ def run_youtube_profile(
     parsed_job_id = UUID(job_id)
     settings = get_settings()
     claim_ttl_seconds = settings.job_claim_ttl_seconds
-    claimed = _claim_profile_job(
+    claimed = claim_profile_job(
         self,
         repository,
         parsed_job_id,
@@ -383,10 +298,10 @@ def run_youtube_profile(
     if claimed is None:
         current = repository.get_job(parsed_job_id)
         if current is not None and current.status is JobStatus.completed:
-            return _job_counts(current)
+            return profile_job_counts(current)
         return None
     if settings.provider_mode != "live":
-        _finalize_profile_failure(
+        finalize_profile_failure(
             repository,
             claimed,
             error_code="provider_mode_fixture",
@@ -402,10 +317,10 @@ def run_youtube_profile(
             claim_ttl_seconds=claim_ttl_seconds,
         )
         return None
-    except _OwnershipLost:
+    except ProfileOwnershipLost:
         return None
     except ProviderQuotaError as error:
-        _finalize_profile_failure(
+        finalize_profile_failure(
             repository,
             claimed,
             error_code="youtube_quota_exceeded",
@@ -427,14 +342,14 @@ def run_youtube_profile(
             max_retries=3,
         )
     except ProviderError as error:
-        _finalize_profile_failure(
+        finalize_profile_failure(
             repository,
             claimed,
             error_code=str(error),
         )
         raise
     except Exception:
-        _finalize_profile_failure(
+        finalize_profile_failure(
             repository,
             claimed,
             error_code="youtube_worker_error",

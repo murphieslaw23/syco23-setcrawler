@@ -3,7 +3,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
-from app.services.cron_schedule import validate_cron
+from app.services.cron_schedule import validate_cron, validate_timezone
 
 
 def utc_now() -> datetime:
@@ -19,12 +19,18 @@ class SearchProfileCreate(BaseModel):
     operation: str = Field(default="search", pattern=r"^[a-z][a-z0-9_-]{0,79}$")
     parameters: dict[str, JsonValue] = Field(default_factory=dict)
     schedule_cron: str = "0 6 * * *"
+    schedule_timezone: str = "UTC"
     enabled: bool = True
 
     @field_validator("schedule_cron")
     @classmethod
     def validate_schedule(cls, value: str) -> str:
         return validate_cron(value)
+
+    @field_validator("schedule_timezone")
+    @classmethod
+    def validate_schedule_timezone(cls, value: str) -> str:
+        return validate_timezone(value)
 
     @model_validator(mode="after")
     def default_query_parameter(self):
@@ -42,12 +48,18 @@ class SearchProfileUpdate(BaseModel):
     operation: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_-]{0,79}$")
     parameters: dict[str, JsonValue] | None = None
     schedule_cron: str | None = None
+    schedule_timezone: str | None = None
     enabled: bool | None = None
 
     @field_validator("schedule_cron")
     @classmethod
     def validate_schedule(cls, value: str | None) -> str | None:
         return validate_cron(value) if value is not None else None
+
+    @field_validator("schedule_timezone")
+    @classmethod
+    def validate_schedule_timezone(cls, value: str | None) -> str | None:
+        return validate_timezone(value) if value is not None else None
 
 
 class SearchProfile(SearchProfileCreate):
