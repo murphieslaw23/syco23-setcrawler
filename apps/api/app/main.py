@@ -6,10 +6,16 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import Settings, get_settings
 from app.core.database import create_pool
+from app.core.observability import (
+    RequestCorrelationMiddleware,
+    install_structured_logging,
+    settings_secret_values,
+)
 from app.repositories.base import Repository
 from app.repository import InMemoryRepository, PostgresRepository
 from app.routers import auth, candidates, health, imports, providers, search_profiles, sets, stats
 from app.services.provider import build_provider_registry, get_provider_registry
+from app.services.operational_health import OperationalHealthProbe, OperationalProbe
 from app.workers.dispatch import JobDispatcher
 
 
@@ -18,6 +24,7 @@ def create_app(
     *,
     settings: Settings | None = None,
     dispatcher: JobDispatcher | None = None,
+    operational_probe: OperationalProbe | None = None,
 ) -> FastAPI:
     selected_settings = settings or get_settings()
     uses_default_settings = settings is None
@@ -56,6 +63,17 @@ def create_app(
     app.state.settings = selected_settings
     app.state.database_pool = pool
     app.state.provider_registry = None
+    app.state.operational_probe = operational_probe or OperationalHealthProbe(
+        repository,
+        selected_settings,
+    )
+    if selected_settings.environment == "production" and uses_default_settings:
+        install_structured_logging(
+            service=selected_settings.service_component,
+            environment=selected_settings.environment,
+            secret_values=settings_secret_values(selected_settings),
+        )
+    app.add_middleware(RequestCorrelationMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=selected_settings.allowed_origins,

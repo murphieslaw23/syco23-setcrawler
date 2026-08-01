@@ -1111,6 +1111,33 @@ class InMemoryRepository:
             },
         }
 
+    def operational_metrics(
+        self,
+        *,
+        claim_ttl_seconds: int,
+    ) -> dict[str, int]:
+        if claim_ttl_seconds < 1:
+            raise ValueError("claim_ttl_seconds must be positive")
+        stale_before = _now() - timedelta(seconds=claim_ttl_seconds)
+        jobs = tuple(self.jobs.values())
+        return {
+            "dead_letter_jobs": sum(
+                job.status is JobStatus.dead_letter for job in jobs
+            ),
+            "stuck_processing_jobs": sum(
+                job.status is JobStatus.processing
+                and job.started_at is not None
+                and job.started_at < stale_before
+                for job in jobs
+            ),
+            "provider_quota_failures": sum(
+                job.error_code == "youtube_quota_exceeded" for job in jobs
+            ),
+            "provider_robots_failures": sum(
+                job.error_code == "robots_denied" for job in jobs
+            ),
+        }
+
 
 def _apply_memory_candidate(
     record: SetDetail, candidate: Candidate

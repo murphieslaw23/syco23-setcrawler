@@ -164,4 +164,10 @@ class Repository(Protocol):
         next_scheduled_at: datetime,
     ) -> SearchProfile | None: ...
 
+    def operational_metrics(
+        self,
+        *,
+        claim_ttl_seconds: int,
+    ) -> dict[str, int]: ...
+
     def stats(self) -> dict[str, Any]: ...

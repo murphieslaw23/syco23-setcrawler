@@ -1548,6 +1548,46 @@ class PostgresRepository:
             "queue": queue,
         }
 
+    def operational_metrics(
+        self,
+        *,
+        claim_ttl_seconds: int,
+    ) -> dict[str, int]:
+        if claim_ttl_seconds < 1:
+            raise ValueError("claim_ttl_seconds must be positive")
+        with self.pool.connection() as connection:
+            with connection.cursor() as cursor:
+                row = cursor.execute(
+                    """
+                    select
+                      count(*) filter (
+                        where status = 'dead_letter'
+                      ) as dead_letter_jobs,
+                      count(*) filter (
+                        where status = 'processing'
+                          and started_at is not null
+                          and started_at
+                              < now() - (%s * interval '1 second')
+                      ) as stuck_processing_jobs,
+                      count(*) filter (
+                        where error_code = 'youtube_quota_exceeded'
+                      ) as provider_quota_failures,
+                      count(*) filter (
+                        where error_code = 'robots_denied'
+                      ) as provider_robots_failures
+                    from import_jobs
+                    """,
+                    (claim_ttl_seconds,),
+                ).fetchone()
+        if row is None:
+            raise RuntimeError("Operational metrics query returned no row")
+        return {
+            "dead_letter_jobs": int(row["dead_letter_jobs"]),
+            "stuck_processing_jobs": int(row["stuck_processing_jobs"]),
+            "provider_quota_failures": int(row["provider_quota_failures"]),
+            "provider_robots_failures": int(row["provider_robots_failures"]),
+        }
+
 
 def _assert_persisted_source_projection(cursor: Any, set_id: UUID) -> None:
     row = cursor.execute(

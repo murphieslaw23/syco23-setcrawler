@@ -213,6 +213,43 @@ def test_deploy_script_rejects_a_restarting_beat_scheduler() -> None:
     assert 'fail "worker-beat restarted during the stability window"' in deploy_script
 
 
+def test_production_observability_has_bounded_logs_and_a_release_runbook() -> None:
+    compose_path = ROOT / "docker-compose.production.yml"
+    compose = yaml.safe_load(compose_path.read_text())
+
+    for service in compose["services"].values():
+        assert service["logging"] == {
+            "driver": "local",
+            "options": {"max-size": "10m", "max-file": "5"},
+        }
+
+    runbook = (ROOT / "docs" / "observability.md").read_text()
+    for expected in (
+        "Import latency SLO",
+        "Job terminalization SLO",
+        "dead_letter_growth",
+        "redrive_publish_failures",
+        "stuck_processing_jobs",
+        "provider_quota_failures",
+        "provider_robots_failures",
+        "X-Request-ID",
+        "Release evidence checklist",
+        "Rollback",
+    ):
+        assert expected in runbook
+
+    env_example = (ROOT / ".env.production.example").read_text()
+    for variable in (
+        "HEALTH_PROBE_CACHE_SECONDS",
+        "BEAT_STALE_AFTER_SECONDS",
+        "DEAD_LETTER_ALERT_THRESHOLD",
+        "STUCK_JOB_ALERT_THRESHOLD",
+        "REDRIVE_FAILURE_ALERT_THRESHOLD",
+        "PROVIDER_FAILURE_ALERT_THRESHOLD",
+    ):
+        assert variable in env_example
+
+
 def test_ci_governance_and_pull_request_evidence_contract() -> None:
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
     template = (ROOT / ".github" / "pull_request_template.md").read_text()

@@ -42,6 +42,14 @@ class Settings(BaseSettings):
     job_claim_ttl_seconds: int = Field(default=300, ge=1)
     job_redrive_interval_seconds: int = Field(default=60, ge=5)
     job_redrive_batch_size: int = Field(default=100, ge=1, le=1_000)
+    service_component: str = Field(default="api", min_length=1, max_length=80)
+    health_probe_timeout_seconds: float = Field(default=1.0, gt=0, le=10)
+    health_probe_cache_seconds: int = Field(default=10, ge=1, le=60)
+    beat_stale_after_seconds: int = Field(default=180, ge=60, le=3_600)
+    dead_letter_alert_threshold: int = Field(default=1, ge=1)
+    stuck_job_alert_threshold: int = Field(default=1, ge=1)
+    redrive_failure_alert_threshold: int = Field(default=1, ge=1)
+    provider_failure_alert_threshold: int = Field(default=1, ge=1)
     local_user_id: UUID = UUID("00000000-0000-4000-8000-000000000023")
     local_user_role: Literal["viewer", "editor", "admin"] = "admin"
 
