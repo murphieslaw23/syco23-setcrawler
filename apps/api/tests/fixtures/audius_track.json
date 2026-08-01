@@ -1,0 +1,14 @@
+{
+  "data": {
+    "id": "audius-track-23",
+    "title": "Warehouse Set 23",
+    "permalink": "/dj-fixture/warehouse-set-23",
+    "duration": 5400,
+    "release_date": "2026-07-23T20:00:00Z",
+    "user": {"name": "DJ Fixture", "handle": "dj-fixture"},
+    "artwork": {"480x480": "https://creatornode.audius.co/content/fixture.jpg"},
+    "is_downloadable": true,
+    "download_conditions": null,
+    "license": "CC-BY-4.0"
+  }
+}

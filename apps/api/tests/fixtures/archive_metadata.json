@@ -1,0 +1,28 @@
+{
+  "metadata": {
+    "identifier": "warehouse-set-23",
+    "title": "Warehouse Set 23",
+    "creator": "DJ Fixture",
+    "date": "2026-07-23T20:00:00Z",
+    "licenseurl": "https://creativecommons.org/licenses/by/4.0/"
+  },
+  "files": [
+    {
+      "name": "warehouse-set-23.mp3",
+      "source": "original",
+      "format": "VBR MP3",
+      "size": "23000000",
+      "md5": "not-a-sha256"
+    },
+    {
+      "name": "cover.jpg",
+      "source": "original",
+      "format": "JPEG"
+    },
+    {
+      "name": "derived.mp3",
+      "source": "derivative",
+      "format": "VBR MP3"
+    }
+  ]
+}

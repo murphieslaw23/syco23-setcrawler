@@ -1,0 +1,40 @@
+name: provider-smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: provider-smoke-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  provider-smoke:
+    environment: provider-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: [archive-org, mixcloud, audius, rss]
+    defaults:
+      run:
+        working-directory: apps/api
+    env:
+      PROVIDER_SMOKE_PROVIDER: ${{ matrix.provider }}
+      PROVIDER_SMOKE_GUARD: ${{ secrets.PROVIDER_SMOKE_GUARD }}
+      AUDIUS_API_BEARER_TOKEN: ${{ secrets.AUDIUS_API_BEARER_TOKEN }}
+      RSS_SMOKE_FEED_URL: ${{ secrets.RSS_SMOKE_FEED_URL }}
+      RSS_SMOKE_EVIDENCE_URL: ${{ secrets.RSS_SMOKE_EVIDENCE_URL }}
+      RSS_SMOKE_LICENSE: ${{ vars.RSS_SMOKE_LICENSE }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run reference-only provider smoke
+        run: pytest tests/test_provider_live_smoke.py -q

@@ -91,46 +91,6 @@ class _FrozenModel(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
-class ProviderItemPayload(_FrozenModel):
-    provider_key: str
-    external_id: str
-    canonical_url: AnyHttpUrl
-    title: str | None = Field(default=None, max_length=500)
-    published_at: datetime | None = None
-    duration_seconds: int | None = Field(default=None, ge=0)
-    creator_name: str | None = Field(default=None, max_length=300)
-    embed_url: AnyHttpUrl | None = None
-    artwork_candidates: tuple[AnyHttpUrl, ...] = Field(
-        default=(),
-        max_length=32,
-    )
-    raw_metadata: dict[str, JsonValue] = Field(default_factory=dict)
-    provenance: dict[str, JsonValue] = Field(default_factory=dict)
-    license_evidence: dict[str, JsonValue] | None = None
-
-    @field_validator("provider_key", mode="before")
-    @classmethod
-    def validate_provider_key(cls, value: object) -> str:
-        return _provider_key(value)
-
-    @field_validator("external_id", mode="before")
-    @classmethod
-    def validate_external_id(cls, value: object) -> str:
-        return _bounded_text(value, field="external_id", maximum=512)
-
-    @field_validator(
-        "raw_metadata",
-        "provenance",
-        "license_evidence",
-        mode="before",
-    )
-    @classmethod
-    def validate_metadata(cls, value: object) -> object:
-        if value is None:
-            return value
-        return _validate_json_tree(value)
-
-
 class DiscoveryRequest(_FrozenModel):
     operation: str
     parameters: dict[str, JsonValue] = Field(default_factory=dict)
@@ -153,11 +113,6 @@ class DiscoveryRequest(_FrozenModel):
     @classmethod
     def validate_parameters(cls, value: object) -> object:
         return _validate_json_tree(value, path="parameters")
-
-
-class DiscoveryPage(_FrozenModel):
-    items: tuple[ProviderItemPayload, ...]
-    next_cursor: str | None = Field(default=None, max_length=2048)
 
 
 class AuthorizedAudioCandidate(_FrozenModel):
@@ -193,7 +148,70 @@ class AuthorizedAudioCandidate(_FrozenModel):
     def require_evidence(self) -> "AuthorizedAudioCandidate":
         if not self.evidence_references:
             raise ValueError("at least one rights-evidence reference is required")
+        if self.source_url.scheme != "https" or any(
+            reference.scheme != "https"
+            for reference in self.evidence_references
+        ):
+            raise ValueError("download candidates require HTTPS references")
         return self
+
+
+class ProviderItemPayload(_FrozenModel):
+    provider_key: str
+    external_id: str
+    canonical_url: AnyHttpUrl
+    title: str | None = Field(default=None, max_length=500)
+    published_at: datetime | None = None
+    duration_seconds: int | None = Field(default=None, ge=0)
+    creator_name: str | None = Field(default=None, max_length=300)
+    embed_url: AnyHttpUrl | None = None
+    artwork_candidates: tuple[AnyHttpUrl, ...] = Field(
+        default=(),
+        max_length=32,
+    )
+    download_candidates: tuple[AuthorizedAudioCandidate, ...] = Field(
+        default=(),
+        max_length=32,
+    )
+    raw_metadata: dict[str, JsonValue] = Field(default_factory=dict)
+    provenance: dict[str, JsonValue] = Field(default_factory=dict)
+    license_evidence: dict[str, JsonValue] | None = None
+
+    @field_validator("provider_key", mode="before")
+    @classmethod
+    def validate_provider_key(cls, value: object) -> str:
+        return _provider_key(value)
+
+    @field_validator("external_id", mode="before")
+    @classmethod
+    def validate_external_id(cls, value: object) -> str:
+        return _bounded_text(value, field="external_id", maximum=512)
+
+    @field_validator(
+        "raw_metadata",
+        "provenance",
+        "license_evidence",
+        mode="before",
+    )
+    @classmethod
+    def validate_metadata(cls, value: object) -> object:
+        if value is None:
+            return value
+        return _validate_json_tree(value)
+
+    @model_validator(mode="after")
+    def validate_download_candidates(self) -> "ProviderItemPayload":
+        if any(
+            candidate.provider_key != self.provider_key
+            for candidate in self.download_candidates
+        ):
+            raise ValueError("candidate provider must match item provider")
+        return self
+
+
+class DiscoveryPage(_FrozenModel):
+    items: tuple[ProviderItemPayload, ...]
+    next_cursor: str | None = Field(default=None, max_length=2048)
 
 
 @dataclass(frozen=True, slots=True)
