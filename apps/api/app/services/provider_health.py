@@ -32,10 +32,10 @@ def descriptor_runtime_state(
     reason = None
     if settings.provider_mode != "live":
         reason = "provider_runtime_disabled"
-    elif not configuration_complete:
-        reason = "provider_configuration_missing"
     elif not explicitly_enabled:
         reason = "provider_disabled"
+    elif not configuration_complete:
+        reason = "provider_configuration_missing"
     return {
         "key": descriptor.key,
         "display_name": descriptor.display_name,

@@ -29,6 +29,7 @@ from app.schemas.import_job import validate_job_transition
 from app.repositories.base import ActiveProfileJobsError
 from app.services.heuristic import HeuristicConfig, ScoreResult
 from app.services.normalizer import RawSetPayload
+from app.services.provider_contracts import ProviderItemPayload
 from app.services.provider_sources import (
     SourceIntegrityError,
     legacy_source_to_provider_key,
@@ -1091,6 +1092,197 @@ class PostgresRepository:
                     ),
                 ).fetchone()
         return _job(row) if row else None
+
+    def complete_provider_discovery(
+        self,
+        job_id: UUID,
+        claim_started_at: datetime,
+        *,
+        provider_key: str,
+        items: tuple[ProviderItemPayload, ...],
+        next_cursor: str | None,
+    ) -> ImportJob | None:
+        if any(item.provider_key != provider_key for item in items):
+            raise ValueError("provider discovery item mismatch")
+        with self.pool.connection() as connection:
+            with connection.cursor() as cursor:
+                job = cursor.execute(
+                    """
+                    select * from import_jobs
+                    where id = %s
+                      and status = 'processing'
+                      and started_at = %s
+                    for update
+                    """,
+                    (job_id, claim_started_at),
+                ).fetchone()
+                if job is None:
+                    return None
+                profile_id = job["search_profile_id"]
+                if profile_id is None:
+                    raise ValueError(
+                        f"Import job {job_id} has no search profile"
+                    )
+                if job["details"].get("provider_key") != provider_key:
+                    raise ValueError("provider discovery job mismatch")
+                validate_job_transition(
+                    JobStatus(job["status"]),
+                    JobStatus.completed,
+                )
+                profile = cursor.execute(
+                    """
+                    select id, source from search_profiles
+                    where id = %s for update
+                    """,
+                    (profile_id,),
+                ).fetchone()
+                if profile is None or profile["source"] != provider_key:
+                    raise ValueError("provider discovery profile mismatch")
+                provider = cursor.execute(
+                    "select id from providers where key = %s",
+                    (provider_key,),
+                ).fetchone()
+                if provider is None:
+                    raise ValueError(
+                        f"provider {provider_key} is not registered"
+                    )
+                for item in items:
+                    cursor.execute(
+                        """
+                        insert into provider_items (
+                            provider_id, external_id, canonical_url, title,
+                            published_at, duration_seconds, creator_name,
+                            embed_url, artwork_candidates,
+                            download_candidates, raw_metadata, provenance,
+                            license_evidence, metadata_fetched_at
+                        ) values (
+                            %s, %s, %s, %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s, %s, now()
+                        )
+                        on conflict (provider_id, external_id) do update
+                        set canonical_url = excluded.canonical_url,
+                            title = excluded.title,
+                            published_at = excluded.published_at,
+                            duration_seconds = excluded.duration_seconds,
+                            creator_name = excluded.creator_name,
+                            embed_url = excluded.embed_url,
+                            artwork_candidates = excluded.artwork_candidates,
+                            download_candidates = excluded.download_candidates,
+                            raw_metadata = excluded.raw_metadata,
+                            provenance = excluded.provenance,
+                            license_evidence = excluded.license_evidence,
+                            metadata_fetched_at = excluded.metadata_fetched_at,
+                            updated_at = now()
+                        """,
+                        (
+                            provider["id"],
+                            item.external_id,
+                            str(item.canonical_url),
+                            item.title,
+                            item.published_at,
+                            item.duration_seconds,
+                            item.creator_name,
+                            str(item.embed_url) if item.embed_url else None,
+                            Jsonb(
+                                [str(value) for value in item.artwork_candidates]
+                            ),
+                            Jsonb(
+                                [
+                                    value.model_dump(mode="json")
+                                    for value in item.download_candidates
+                                ]
+                            ),
+                            Jsonb(item.raw_metadata),
+                            Jsonb(item.provenance),
+                            (
+                                Jsonb(item.license_evidence)
+                                if item.license_evidence is not None
+                                else None
+                            ),
+                        ),
+                    )
+                latest_job = cursor.execute(
+                    """
+                    select id from import_jobs
+                    where search_profile_id = %s
+                    order by created_at desc, id desc
+                    limit 1
+                    """,
+                    (profile_id,),
+                ).fetchone()
+                if latest_job is not None and latest_job["id"] == job_id:
+                    cursor.execute(
+                        """
+                        update search_profiles
+                        set last_run_at = now(), next_page_token = %s
+                        where id = %s
+                        """,
+                        (next_cursor, profile_id),
+                    )
+                row = cursor.execute(
+                    """
+                    update import_jobs
+                    set status = 'completed', finished_at = now(),
+                        error_code = null, error_message = null,
+                        details = details || %s, updated_at = now()
+                    where id = %s
+                      and status = 'processing'
+                      and started_at = %s
+                    returning *
+                    """,
+                    (
+                        Jsonb(
+                            {
+                                "outcome": "provider_metadata_persisted",
+                                "provider_item_count": len(items),
+                                "provider_external_ids": [
+                                    item.external_id for item in items
+                                ],
+                                "last_result_count": len(items),
+                                "last_error_code": None,
+                                "result_count": len(items),
+                                "discard_count": 0,
+                                "duplicate_count": 0,
+                            }
+                        ),
+                        job_id,
+                        claim_started_at,
+                    ),
+                ).fetchone()
+        return _job(row) if row else None
+
+    def get_provider_item(
+        self,
+        provider_key: str,
+        external_id: str,
+    ) -> ProviderItemPayload | None:
+        with self.pool.connection() as connection:
+            with connection.cursor() as cursor:
+                row = cursor.execute(
+                    """
+                    select
+                        providers.key as provider_key,
+                        provider_items.external_id,
+                        provider_items.canonical_url,
+                        provider_items.title,
+                        provider_items.published_at,
+                        provider_items.duration_seconds,
+                        provider_items.creator_name,
+                        provider_items.embed_url,
+                        provider_items.artwork_candidates,
+                        provider_items.download_candidates,
+                        provider_items.raw_metadata,
+                        provider_items.provenance,
+                        provider_items.license_evidence
+                    from provider_items
+                    join providers
+                      on providers.id = provider_items.provider_id
+                    where providers.key = %s
+                      and provider_items.external_id = %s
+                    """,
+                    (provider_key, external_id),
+                ).fetchone()
+        return ProviderItemPayload.model_validate(row) if row else None
 
     def list_sets(
         self,

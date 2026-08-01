@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000"
     youtube_api_key: str = ""
     audius_api_bearer_token: str = Field(default="", max_length=4096)
+    archive_org_enabled: bool = False
+    mixcloud_enabled: bool = False
+    audius_enabled: bool = False
+    rss_enabled: bool = False
+    rss_trusted_feeds_json: str = Field(default="", max_length=65_536)
     scraper_user_agent: str = "syco23-setcrawler/0.1 (+contact: local@example.com)"
     scraper_request_delay_ms: int = Field(default=5_000, ge=5_000, le=10_000)
     ftm_scraper_enabled: bool = False

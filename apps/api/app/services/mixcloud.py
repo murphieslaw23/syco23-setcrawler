@@ -53,6 +53,8 @@ class MixcloudAdapter:
         )
 
     async def discover(self, request: DiscoveryRequest) -> DiscoveryPage:
+        if request.operation == "user-cloudcasts":
+            return await self.syndicate(request)
         if request.operation != "search":
             raise ProviderValidationError("mixcloud_operation_unsupported")
         query = request.parameters.get("query")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from functools import lru_cache
 from typing import Any, Protocol
@@ -270,6 +271,44 @@ def build_provider_descriptors(settings: Settings) -> tuple[ProviderDescriptor, 
             )
         )
 
+    def archive_factory() -> object:
+        from app.services.archive_org import ArchiveOrgAdapter
+
+        return ArchiveOrgAdapter(
+            timeout=settings.provider_request_timeout_seconds,
+        )
+
+    def mixcloud_factory() -> object:
+        from app.services.mixcloud import MixcloudAdapter
+
+        return MixcloudAdapter(
+            timeout=settings.provider_request_timeout_seconds,
+        )
+
+    def audius_factory() -> object:
+        from app.services.audius import AudiusAdapter
+
+        return AudiusAdapter(
+            bearer_token=settings.audius_api_bearer_token,
+            timeout=settings.provider_request_timeout_seconds,
+        )
+
+    def rss_factory() -> object:
+        from app.services.rss import RSSAdapter, TrustedFeed
+
+        raw = settings.rss_trusted_feeds_json
+        values = json.loads(raw) if raw else {}
+        if not isinstance(values, dict):
+            raise ValueError("RSS_TRUSTED_FEEDS_JSON must be an object")
+        feeds = {
+            str(url): TrustedFeed.model_validate(trust)
+            for url, trust in values.items()
+        }
+        return RSSAdapter(
+            trusted_feeds=feeds,
+            timeout=settings.provider_request_timeout_seconds,
+        )
+
     return (
         ProviderDescriptor(
             key="youtube",
@@ -361,6 +400,150 @@ def build_provider_descriptors(settings: Settings) -> tuple[ProviderDescriptor, 
             discovery_operations={"crawl": frozenset({"start_url"})},
             public_health_key="freeteknomusic",
             health_mode="robots_crawl",
+        ),
+        ProviderDescriptor(
+            key="archive-org",
+            display_name="Internet Archive",
+            capabilities=frozenset(
+                {
+                    ProviderCapability.discovery,
+                    ProviderCapability.metadata,
+                    ProviderCapability.embed,
+                    ProviderCapability.license_evidence,
+                }
+            ),
+            workload_by_capability={
+                ProviderCapability.discovery: ProviderWorkload.provider_api,
+                ProviderCapability.metadata: ProviderWorkload.provider_api,
+                ProviderCapability.embed: ProviderWorkload.provider_api,
+                ProviderCapability.license_evidence: (
+                    ProviderWorkload.provider_api
+                ),
+            },
+            task_by_capability={
+                ProviderCapability.discovery: (
+                    "app.workers.provider_discovery.discover_profile"
+                ),
+            },
+            adapter_factory=archive_factory,
+            url_matchers=(
+                re.compile(
+                    r"^https://(?:www\.)?archive\.org/details/"
+                    r"[A-Za-z0-9][A-Za-z0-9._-]{0,255}/?$"
+                ),
+            ),
+            enabled_by_default=False,
+            enabled_setting="ARCHIVE_ORG_ENABLED",
+            discovery_operations={"search": frozenset({"query"})},
+            health_mode="official_api",
+        ),
+        ProviderDescriptor(
+            key="mixcloud",
+            display_name="Mixcloud",
+            capabilities=frozenset(
+                {
+                    ProviderCapability.discovery,
+                    ProviderCapability.metadata,
+                    ProviderCapability.embed,
+                    ProviderCapability.syndication,
+                }
+            ),
+            workload_by_capability={
+                ProviderCapability.discovery: ProviderWorkload.provider_api,
+                ProviderCapability.metadata: ProviderWorkload.provider_api,
+                ProviderCapability.embed: ProviderWorkload.provider_api,
+                ProviderCapability.syndication: (
+                    ProviderWorkload.provider_api
+                ),
+            },
+            task_by_capability={
+                ProviderCapability.discovery: (
+                    "app.workers.provider_discovery.discover_profile"
+                ),
+            },
+            adapter_factory=mixcloud_factory,
+            url_matchers=(
+                re.compile(
+                    r"^https://(?:www\.)?mixcloud\.com/"
+                    r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}/"
+                    r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}/?$"
+                ),
+            ),
+            enabled_by_default=False,
+            enabled_setting="MIXCLOUD_ENABLED",
+            discovery_operations={
+                "search": frozenset({"query"}),
+                "user-cloudcasts": frozenset({"user"}),
+            },
+            health_mode="official_api",
+        ),
+        ProviderDescriptor(
+            key="audius",
+            display_name="Audius",
+            capabilities=frozenset(
+                {
+                    ProviderCapability.discovery,
+                    ProviderCapability.metadata,
+                    ProviderCapability.embed,
+                    ProviderCapability.license_evidence,
+                }
+            ),
+            workload_by_capability={
+                ProviderCapability.discovery: ProviderWorkload.provider_api,
+                ProviderCapability.metadata: ProviderWorkload.provider_api,
+                ProviderCapability.embed: ProviderWorkload.provider_api,
+                ProviderCapability.license_evidence: (
+                    ProviderWorkload.provider_api
+                ),
+            },
+            task_by_capability={
+                ProviderCapability.discovery: (
+                    "app.workers.provider_discovery.discover_profile"
+                ),
+            },
+            adapter_factory=audius_factory,
+            url_matchers=(
+                re.compile(
+                    r"^https://api\.audius\.co/v1/tracks/"
+                    r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+                ),
+                re.compile(
+                    r"^https://(?:www\.)?audius\.co/"
+                    r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}/"
+                    r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}/?$"
+                ),
+            ),
+            required_settings=("AUDIUS_API_BEARER_TOKEN",),
+            enabled_by_default=False,
+            enabled_setting="AUDIUS_ENABLED",
+            discovery_operations={"search": frozenset({"query"})},
+            health_mode="official_api",
+        ),
+        ProviderDescriptor(
+            key="rss",
+            display_name="RSS / Atom",
+            capabilities=frozenset(
+                {
+                    ProviderCapability.discovery,
+                    ProviderCapability.syndication,
+                }
+            ),
+            workload_by_capability={
+                ProviderCapability.discovery: ProviderWorkload.provider_api,
+                ProviderCapability.syndication: ProviderWorkload.provider_api,
+            },
+            task_by_capability={
+                ProviderCapability.discovery: (
+                    "app.workers.provider_discovery.discover_profile"
+                ),
+            },
+            adapter_factory=rss_factory,
+            url_matchers=(),
+            required_settings=("RSS_TRUSTED_FEEDS_JSON",),
+            enabled_by_default=False,
+            enabled_setting="RSS_ENABLED",
+            discovery_operations={"feed": frozenset({"feed_url"})},
+            health_mode="trusted_feed",
         ),
     )
 

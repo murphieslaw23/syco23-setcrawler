@@ -146,7 +146,7 @@ def _descriptor_problems(descriptor: ProviderDescriptor) -> list[str]:
     duplicates = sorted(pattern for pattern in set(patterns) if patterns.count(pattern) > 1)
     for pattern in duplicates:
         problems.append(f"provider {label}: duplicate URL matcher {pattern}")
-    if not patterns:
+    if not patterns and ProviderCapability.metadata in valid_capabilities:
         problems.append(f"provider {label}: at least one URL matcher is required")
 
     for setting in sorted(descriptor.required_settings, key=str):

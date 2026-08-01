@@ -138,6 +138,29 @@ def test_descriptor_owns_task_and_workload_routing() -> None:
     ]
 
 
+def test_archive_profile_dispatches_generic_worker_on_provider_api() -> None:
+    registry = build_provider_registry(_settings())
+    celery = _Celery()
+    job = ImportJob(
+        source=SetSource.youtube,
+        job_type=JobType.search_profile,
+        profile_id=uuid4(),
+        details={
+            "provider_key": "archive-org",
+            "capability": "discovery",
+            "operation": "search",
+            "parameters": {"query": "warehouse set"},
+        },
+    )
+
+    dispatch_job(job, registry=registry, celery=celery)
+
+    signature = celery.signatures[0]
+    assert signature.task_name == "app.workers.provider_discovery.discover_profile"
+    assert signature.calls[0]["queue"] == "provider-api"
+    assert signature.calls[0]["headers"]["syco23_provider"] == "archive-org"
+
+
 def test_all_builtin_dispatches_use_workload_queues_and_never_audio() -> None:
     registry = build_provider_registry(_settings())
     celery = _Celery()

@@ -43,6 +43,7 @@ celery_app.conf.imports = (
     "app.workers.ftm_scraper",
     "app.workers.normalize_worker",
     "app.workers.profile_scheduler",
+    "app.workers.provider_discovery",
     "app.workers.soundcloud_importer",
     "app.workers.youtube_poller",
 )

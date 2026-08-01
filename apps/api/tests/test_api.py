@@ -32,7 +32,15 @@ def test_health_and_stats_contract() -> None:
     assert health["status"] == "ok"
     assert health["service"] == "syco23-setcrawler-api"
     assert isinstance(health["ready"], bool)
-    assert set(health["providers"]) == {"youtube", "soundcloud", "ftm"}
+    assert set(health["providers"]) == {
+        "archive-org",
+        "audius",
+        "ftm",
+        "mixcloud",
+        "rss",
+        "soundcloud",
+        "youtube",
+    }
     stats = client.get("/stats").json()
 
     assert stats["total_sets"] == 6

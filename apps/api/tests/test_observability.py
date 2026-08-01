@@ -394,6 +394,14 @@ def test_health_preserves_public_contract_and_combines_operational_readiness() -
     assert body["status"] == "ok"
     assert body["service"] == "syco23-setcrawler-api"
     assert body["ready"] is False
-    assert set(body["providers"]) == {"youtube", "soundcloud", "ftm"}
+    assert set(body["providers"]) == {
+        "archive-org",
+        "audius",
+        "ftm",
+        "mixcloud",
+        "rss",
+        "soundcloud",
+        "youtube",
+    }
     assert body["dependencies"] == operational["dependencies"]
     assert body["alerts"] == operational["alerts"]

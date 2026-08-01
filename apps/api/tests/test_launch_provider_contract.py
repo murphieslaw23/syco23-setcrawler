@@ -209,6 +209,30 @@ def test_mixcloud_metadata_and_embed_never_produce_download_candidates() -> None
     assert not hasattr(adapter, "fetch_authorized_audio")
 
 
+def test_mixcloud_syndication_uses_the_discovery_entrypoint() -> None:
+    seen_paths: list[str] = []
+
+    def syndication_transport(request: httpx.Request) -> httpx.Response:
+        seen_paths.append(request.url.path)
+        return httpx.Response(200, json=_json_fixture("mixcloud_search.json"))
+
+    adapter = MixcloudAdapter(
+        transport=httpx.MockTransport(syndication_transport)
+    )
+
+    page = asyncio.run(
+        adapter.discover(
+            DiscoveryRequest(
+                operation="user-cloudcasts",
+                parameters={"user": "dj-fixture"},
+            )
+        )
+    )
+
+    assert len(page.items) == 1
+    assert seen_paths == ["/dj-fixture/cloudcasts/"]
+
+
 def test_audius_requires_unconditional_download_and_permissive_license() -> None:
     permitted = AudiusAdapter(transport=httpx.MockTransport(_audius_transport))
     item = asyncio.run(permitted.resolve_metadata("audius-track-23"))
@@ -257,6 +281,27 @@ def test_audius_sends_server_side_bearer_token_without_serializing_it() -> None:
     item = asyncio.run(adapter.resolve_metadata("audius-track-23"))
 
     assert "fixture-token" not in str(item.model_dump(mode="json"))
+
+
+def test_audius_resolves_its_own_canonical_permalink() -> None:
+    def permalink_transport(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/tracks"
+        assert request.url.params["permalink[]"] == "/dj-fixture/warehouse-set-23"
+        track = _json_fixture("audius_track.json")["data"]
+        return httpx.Response(200, json={"data": [track]})
+
+    adapter = AudiusAdapter(transport=httpx.MockTransport(permalink_transport))
+
+    item = asyncio.run(
+        adapter.resolve_metadata(
+            "https://audius.co/dj-fixture/warehouse-set-23"
+        )
+    )
+
+    assert item.external_id == "audius-track-23"
+    assert str(item.canonical_url) == (
+        "https://audius.co/dj-fixture/warehouse-set-23"
+    )
 
 
 def test_soundcloud_retains_official_download_distinction_without_fetching() -> None:

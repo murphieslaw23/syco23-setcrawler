@@ -9,6 +9,7 @@ from app.schemas.profile import SearchProfile, SearchProfileCreate, SearchProfil
 from app.schemas.set import ReviewStatus, SetDetail, SetPage, SetPatch, SetSource
 from app.services.heuristic import HeuristicConfig, ScoreResult
 from app.services.normalizer import RawSetPayload
+from app.services.provider_contracts import ProviderItemPayload
 
 
 class ActiveProfileJobsError(RuntimeError):
@@ -123,6 +124,22 @@ class Repository(Protocol):
         error_code: str | None,
         error_message: str | None,
     ) -> ImportJob | None: ...
+
+    def complete_provider_discovery(
+        self,
+        job_id: UUID,
+        claim_started_at: datetime,
+        *,
+        provider_key: str,
+        items: tuple[ProviderItemPayload, ...],
+        next_cursor: str | None,
+    ) -> ImportJob | None: ...
+
+    def get_provider_item(
+        self,
+        provider_key: str,
+        external_id: str,
+    ) -> ProviderItemPayload | None: ...
 
     def list_sets(
         self,

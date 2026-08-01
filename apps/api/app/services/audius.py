@@ -26,16 +26,15 @@ AUDIUS_API_BASE_URL = "https://api.audius.co"
 _TRACK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 
 
-def _audius_track_id(reference: str) -> str:
+def _audius_reference(reference: str) -> tuple[str | None, str | None]:
     if _TRACK_ID.fullmatch(reference):
-        return reference
+        return reference, None
     try:
         parsed = urlsplit(reference)
     except (TypeError, ValueError) as error:
         raise ProviderValidationError("audius_invalid_reference") from error
     if (
         parsed.scheme.casefold() != "https"
-        or (parsed.hostname or "").casefold() != "api.audius.co"
         or parsed.username is not None
         or parsed.password is not None
         or parsed.port is not None
@@ -44,11 +43,21 @@ def _audius_track_id(reference: str) -> str:
     ):
         raise ProviderValidationError("audius_invalid_reference")
     parts = parsed.path.strip("/").split("/")
-    if len(parts) != 3 or parts[:2] != ["v1", "tracks"]:
-        raise ProviderValidationError("audius_invalid_reference")
-    if _TRACK_ID.fullmatch(parts[2]) is None:
-        raise ProviderValidationError("audius_invalid_reference")
-    return parts[2]
+    host = (parsed.hostname or "").casefold()
+    if (
+        host == "api.audius.co"
+        and len(parts) == 3
+        and parts[:2] == ["v1", "tracks"]
+        and _TRACK_ID.fullmatch(parts[2]) is not None
+    ):
+        return parts[2], None
+    if (
+        host in {"audius.co", "www.audius.co"}
+        and len(parts) == 2
+        and all(_TRACK_ID.fullmatch(part) is not None for part in parts)
+    ):
+        return None, "/" + "/".join(parts)
+    raise ProviderValidationError("audius_invalid_reference")
 
 
 class AudiusAdapter:
@@ -101,20 +110,36 @@ class AudiusAdapter:
         return DiscoveryPage(items=items, next_cursor=next_cursor)
 
     async def resolve_metadata(self, reference: str) -> ProviderItemPayload:
-        track_id = _audius_track_id(reference)
+        track_id, permalink = _audius_reference(reference)
+        path = (
+            f"/v1/tracks/{quote(track_id, safe='')}"
+            if track_id is not None
+            else "/v1/tracks"
+        )
         response = await provider_get(
             base_url=AUDIUS_API_BASE_URL,
-            path=f"/v1/tracks/{quote(track_id, safe='')}",
+            path=path,
             transport=self.transport,
             timeout=self.timeout,
             error_code="audius_temporary_error",
+            params={"permalink[]": permalink} if permalink is not None else None,
             headers=self._headers(),
         )
         payload = json_object(response, error_code="audius_invalid_response")
-        return self._item(payload.get("data"), expected_id=track_id)
+        data = payload.get("data")
+        if permalink is not None:
+            if not isinstance(data, list) or len(data) != 1:
+                raise ProviderPayloadError("audius_invalid_response")
+            data = data[0]
+        return self._item(data, expected_id=track_id)
 
     async def resolve_embed(self, reference: str) -> str:
-        track_id = _audius_track_id(reference)
+        track_id, _ = _audius_reference(reference)
+        if track_id is None:
+            item = await self.resolve_metadata(reference)
+            if item.embed_url is None:
+                raise ProviderPayloadError("audius_invalid_response")
+            return str(item.embed_url)
         return f"https://audius.co/embed/track/{quote(track_id, safe='')}?flavor=card"
 
     async def resolve_license_evidence(self, reference: str) -> dict[str, str]:

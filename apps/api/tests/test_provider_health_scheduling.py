@@ -76,6 +76,8 @@ def test_health_preserves_public_fields_and_reports_registry_readiness() -> None
                 repository_mode="memory",
                 provider_mode="live",
                 youtube_api_key="configured-secret",
+                audius_enabled=True,
+                audius_api_bearer_token="audius-secret",
             ),
             dispatcher=RecordingDispatcher(),
         )
@@ -94,6 +96,40 @@ def test_health_preserves_public_fields_and_reports_registry_readiness() -> None
     ]
     assert body["providers"]["youtube"]["workloads"]["discovery"] == "provider-api"
     assert "configured-secret" not in str(body)
+    assert "audius-secret" not in str(body)
+
+
+def test_disabled_provider_does_not_block_readiness_but_enabled_missing_does() -> None:
+    disabled = TestClient(
+        create_app(
+            InMemoryRepository.seeded(),
+            settings=Settings(
+                environment="fixture",
+                repository_mode="memory",
+                provider_mode="live",
+                youtube_api_key="configured-secret",
+            ),
+            dispatcher=RecordingDispatcher(),
+        )
+    ).get("/health").json()
+    enabled_missing = TestClient(
+        create_app(
+            InMemoryRepository.seeded(),
+            settings=Settings(
+                environment="fixture",
+                repository_mode="memory",
+                provider_mode="live",
+                youtube_api_key="configured-secret",
+                audius_enabled=True,
+            ),
+            dispatcher=RecordingDispatcher(),
+        )
+    ).get("/health").json()
+
+    assert disabled["ready"] is True
+    assert disabled["providers"]["audius"]["reason"] == "provider_disabled"
+    assert enabled_missing["ready"] is False
+    assert enabled_missing["providers"]["audius"]["database_enabled"] is True
 
 
 def test_fixture_provider_health_requires_registration_only() -> None:
@@ -156,6 +192,43 @@ def test_scheduler_dispatches_due_fixture_profile_from_descriptor() -> None:
     assert updated is not None
     assert updated.last_scheduled_at == datetime(2026, 8, 1, 6, 0, tzinfo=UTC)
     assert updated.next_scheduled_at == datetime(2026, 8, 2, 6, 0, tzinfo=UTC)
+
+
+def test_scheduler_dispatches_enabled_archive_profile_through_generic_task() -> None:
+    from app.services.provider import build_provider_registry
+
+    repository = InMemoryRepository()
+    profile = repository.create_profile(
+        SearchProfileCreate(
+            name="Archive search",
+            query="warehouse liveset",
+            source="archive-org",
+            operation="search",
+            parameters={"query": "warehouse liveset"},
+            schedule_cron="0 6 * * *",
+        )
+    )
+    dispatcher = _SchedulerDispatcher(repository)
+    settings = Settings(
+        environment="fixture",
+        repository_mode="memory",
+        provider_mode="live",
+        archive_org_enabled=True,
+    )
+
+    result = schedule_due_profiles(
+        repository,
+        dispatcher,
+        build_provider_registry(settings),
+        settings,
+        now=datetime(2026, 8, 1, 6, 0, tzinfo=UTC),
+    )
+
+    assert result == {"due": 1, "created": 1, "dispatched": 1}
+    job = dispatcher.calls[0][1]
+    assert job.details["provider_key"] == "archive-org"
+    assert job.details["operation"] == "search"
+    assert repository.get_profile(profile.id).last_scheduled_at is not None
 
 
 def test_scheduler_runs_one_missed_occurrence_after_restart() -> None:
