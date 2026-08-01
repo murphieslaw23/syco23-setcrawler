@@ -21,6 +21,13 @@ from app.schemas import (
     MergeDecisionAction,
     MergeScore,
     ReviewStatus,
+    RightsDecisionAction,
+    RightsDecisionEvent,
+    RightsEvidence,
+    RightsReview,
+    RightsReviewCreate,
+    RightsReviewPage,
+    RightsReviewStatus,
     SearchProfile,
     SearchProfileCreate,
     SearchProfileUpdate,
@@ -42,6 +49,7 @@ from app.services.merge_scoring import (
     score_set_merge,
 )
 from app.services.provider_contracts import ProviderItemPayload
+from app.services.rights_policy import rights_evidence_complete
 from app.services.provider_sources import (
     SourceIntegrityError,
     legacy_source_to_provider_key,
@@ -184,6 +192,32 @@ def _merge_candidate(row: dict[str, Any]) -> MergeCandidate:
 
 def _merge_decision(row: dict[str, Any]) -> MergeDecision:
     return MergeDecision.model_validate(row)
+
+
+def _rights_review(cursor: Any, row: dict[str, Any]) -> RightsReview:
+    evidence_rows = cursor.execute(
+        """
+        select * from rights_evidence
+        where rights_review_id = %s
+        order by created_at, id
+        """,
+        (row["id"],),
+    ).fetchall()
+    values = dict(row)
+    values.pop("provider_id", None)
+    values["evidence"] = [RightsEvidence.model_validate(item) for item in evidence_rows]
+    return RightsReview.model_validate(values)
+
+
+def _rights_state(review: RightsReview) -> dict[str, Any]:
+    return {
+        "status": review.status.value,
+        "requested_stream": review.requested_stream,
+        "requested_download": review.requested_download,
+        "allow_stream": review.allow_stream,
+        "allow_download": review.allow_download,
+        "evidence_ids": [str(item.id) for item in review.evidence],
+    }
 
 
 def _provider_source_rows(cursor: Any, set_id: UUID) -> list[dict[str, Any]]:
@@ -1892,6 +1926,358 @@ class PostgresRepository:
                     (candidate_id, actor, Jsonb(before), Jsonb(after)),
                 )
         return _merge_candidate(row)
+
+    def create_rights_review(
+        self,
+        payload: RightsReviewCreate,
+        *,
+        actor: str,
+    ) -> RightsReview:
+        with self.pool.connection() as connection:
+            with connection.cursor() as cursor:
+                active_set = cursor.execute(
+                    """
+                    select id from sets
+                    where id = %s and merged_into_id is null
+                    for update
+                    """,
+                    (payload.set_id,),
+                ).fetchone()
+                if active_set is None:
+                    raise ValueError("rights review requires an active set")
+                provider = cursor.execute(
+                    """
+                    select providers.id
+                    from set_provider_items links
+                    join provider_items
+                      on provider_items.id = links.provider_item_id
+                    join providers on providers.id = provider_items.provider_id
+                    where links.set_id = %s
+                      and links.relationship = 'source'
+                      and providers.key = %s
+                      and provider_items.external_id = %s
+                    limit 1
+                    """,
+                    (
+                        payload.set_id,
+                        payload.provider_key,
+                        payload.provider_external_id,
+                    ),
+                ).fetchone()
+                if provider is None:
+                    raise ValueError("rights evidence provider source is not linked")
+                inserted = cursor.execute(
+                    """
+                    insert into rights_reviews (
+                      set_id, provider_id, provider_external_id,
+                      requested_stream, requested_download, submitted_by
+                    ) values (%s, %s, %s, %s, %s, %s)
+                    on conflict (
+                      set_id, provider_id, provider_external_id,
+                      requested_stream, requested_download
+                    ) where status = 'pending'
+                    do nothing
+                    returning id
+                    """,
+                    (
+                        payload.set_id,
+                        provider["id"],
+                        payload.provider_external_id,
+                        payload.requested_stream,
+                        payload.requested_download,
+                        actor,
+                    ),
+                ).fetchone()
+                if inserted is None:
+                    existing = cursor.execute(
+                        """
+                        select id from rights_reviews
+                        where set_id = %s
+                          and provider_id = %s
+                          and provider_external_id = %s
+                          and requested_stream = %s
+                          and requested_download = %s
+                          and status = 'pending'
+                        """,
+                        (
+                            payload.set_id,
+                            provider["id"],
+                            payload.provider_external_id,
+                            payload.requested_stream,
+                            payload.requested_download,
+                        ),
+                    ).fetchone()
+                    if existing is None:
+                        raise RuntimeError("pending rights review conflict was not found")
+                    review_id = existing["id"]
+                else:
+                    review_id = inserted["id"]
+                    for evidence in payload.evidence:
+                        cursor.execute(
+                            """
+                            insert into rights_evidence (
+                              rights_review_id, evidence_type, reference_url,
+                              assertions, submitted_by
+                            ) values (%s, %s, %s, %s, %s)
+                            """,
+                            (
+                                review_id,
+                                evidence.evidence_type.value,
+                                evidence.reference_url,
+                                Jsonb(evidence.assertions),
+                                actor,
+                            ),
+                        )
+                row = cursor.execute(
+                    """
+                    select reviews.*, providers.key as provider_key
+                    from rights_reviews reviews
+                    join providers on providers.id = reviews.provider_id
+                    where reviews.id = %s
+                    """,
+                    (review_id,),
+                ).fetchone()
+                if row is None:
+                    raise RuntimeError("created rights review was not found")
+                return _rights_review(cursor, row)
+
+    def get_rights_review(self, review_id: UUID) -> RightsReview | None:
+        with self.pool.connection() as connection:
+            with connection.cursor() as cursor:
+                row = cursor.execute(
+                    """
+                    select reviews.*, providers.key as provider_key
+                    from rights_reviews reviews
+                    join providers on providers.id = reviews.provider_id
+                    where reviews.id = %s
+                    """,
+                    (review_id,),
+                ).fetchone()
+                return _rights_review(cursor, row) if row is not None else None
+
+    def list_rights_reviews(
+        self,
+        *,
+        status: RightsReviewStatus | None,
+        limit: int,
+        offset: int,
+    ) -> RightsReviewPage:
+        filters: list[str] = []
+        params: list[Any] = []
+        if status is not None:
+            filters.append("reviews.status = %s")
+            params.append(status.value)
+        where = f"where {' and '.join(filters)}" if filters else ""
+        with self.pool.connection() as connection:
+            with connection.cursor() as cursor:
+                total = cursor.execute(
+                    f"select count(*) as count from rights_reviews reviews {where}",
+                    params,
+                ).fetchone()["count"]
+                rows = cursor.execute(
+                    f"""
+                    select reviews.*, providers.key as provider_key
+                    from rights_reviews reviews
+                    join providers on providers.id = reviews.provider_id
+                    {where}
+                    order by reviews.created_at desc, reviews.id desc
+                    limit %s offset %s
+                    """,
+                    (*params, limit, offset),
+                ).fetchall()
+                items = [_rights_review(cursor, row) for row in rows]
+        return RightsReviewPage(
+            items=items,
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
+
+    def _decide_rights_review(
+        self,
+        review_id: UUID,
+        *,
+        actor: str,
+        action: RightsDecisionAction,
+        reason: str,
+        allow_stream: bool,
+        allow_download: bool,
+    ) -> RightsReview | None:
+        target_status = {
+            RightsDecisionAction.approve: RightsReviewStatus.approved,
+            RightsDecisionAction.reject: RightsReviewStatus.rejected,
+            RightsDecisionAction.expire: RightsReviewStatus.expired,
+        }[action]
+        with self.pool.connection() as connection:
+            with connection.cursor() as cursor:
+                row = cursor.execute(
+                    """
+                    select reviews.*, providers.key as provider_key
+                    from rights_reviews reviews
+                    join providers on providers.id = reviews.provider_id
+                    where reviews.id = %s
+                    for update of reviews
+                    """,
+                    (review_id,),
+                ).fetchone()
+                if row is None:
+                    return None
+                review = _rights_review(cursor, row)
+                if review.status is target_status:
+                    if (
+                        review.allow_stream == allow_stream
+                        and review.allow_download == allow_download
+                        and review.decision_reason == reason
+                    ):
+                        return review
+                    return None
+                allowed_source_statuses = {RightsReviewStatus.pending}
+                if action is RightsDecisionAction.expire:
+                    allowed_source_statuses.add(RightsReviewStatus.approved)
+                if review.status not in allowed_source_statuses:
+                    return None
+                if allow_stream and not review.requested_stream:
+                    raise ValueError("rights approval exceeds requested permissions")
+                if allow_download and not review.requested_download:
+                    raise ValueError("rights approval exceeds requested permissions")
+                if action is RightsDecisionAction.approve:
+                    if not allow_stream and not allow_download:
+                        raise ValueError("rights approval must grant a requested permission")
+                    if not rights_evidence_complete(tuple(review.evidence)):
+                        raise ValueError("rights evidence is incomplete")
+                before = _rights_state(review)
+                updated_row = cursor.execute(
+                    """
+                    update rights_reviews
+                    set status = %s, allow_stream = %s, allow_download = %s,
+                        decided_by = %s, decision_reason = %s,
+                        decided_at = now(),
+                        expires_at = case when %s = 'expire' then now() else null end
+                    where id = %s
+                    returning *
+                    """,
+                    (
+                        target_status.value,
+                        allow_stream,
+                        allow_download,
+                        actor,
+                        reason,
+                        action.value,
+                        review_id,
+                    ),
+                ).fetchone()
+                updated_row = {
+                    **dict(updated_row),
+                    "provider_key": review.provider_key,
+                }
+                updated = _rights_review(cursor, updated_row)
+                if action is RightsDecisionAction.approve:
+                    cursor.execute(
+                        """
+                        insert into audio_permissions (
+                          rights_review_id, allow_stream, allow_download,
+                          approved_by
+                        ) values (%s, %s, %s, %s)
+                        on conflict (rights_review_id) do update
+                        set allow_stream = excluded.allow_stream,
+                            allow_download = excluded.allow_download,
+                            approved_by = excluded.approved_by,
+                            approved_at = now(), revoked_at = null
+                        """,
+                        (review_id, allow_stream, allow_download, actor),
+                    )
+                elif action is RightsDecisionAction.expire:
+                    cursor.execute(
+                        """
+                        update audio_permissions
+                        set revoked_at = now()
+                        where rights_review_id = %s and revoked_at is null
+                        """,
+                        (review_id,),
+                    )
+                cursor.execute(
+                    """
+                    insert into rights_review_events (
+                      rights_review_id, action, actor, reason,
+                      before_state, after_state
+                    ) values (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        review_id,
+                        action.value,
+                        actor,
+                        reason,
+                        Jsonb(before),
+                        Jsonb(_rights_state(updated)),
+                    ),
+                )
+                return updated
+
+    def approve_rights_review(
+        self,
+        review_id: UUID,
+        *,
+        actor: str,
+        allow_stream: bool,
+        allow_download: bool,
+        reason: str,
+    ) -> RightsReview | None:
+        return self._decide_rights_review(
+            review_id,
+            actor=actor,
+            action=RightsDecisionAction.approve,
+            reason=reason,
+            allow_stream=allow_stream,
+            allow_download=allow_download,
+        )
+
+    def reject_rights_review(
+        self,
+        review_id: UUID,
+        *,
+        actor: str,
+        reason: str,
+    ) -> RightsReview | None:
+        return self._decide_rights_review(
+            review_id,
+            actor=actor,
+            action=RightsDecisionAction.reject,
+            reason=reason,
+            allow_stream=False,
+            allow_download=False,
+        )
+
+    def expire_rights_review(
+        self,
+        review_id: UUID,
+        *,
+        actor: str,
+        reason: str,
+    ) -> RightsReview | None:
+        return self._decide_rights_review(
+            review_id,
+            actor=actor,
+            action=RightsDecisionAction.expire,
+            reason=reason,
+            allow_stream=False,
+            allow_download=False,
+        )
+
+    def list_rights_decisions(
+        self,
+        review_id: UUID,
+    ) -> list[RightsDecisionEvent]:
+        with self.pool.connection() as connection:
+            with connection.cursor() as cursor:
+                rows = cursor.execute(
+                    """
+                    select * from rights_review_events
+                    where rights_review_id = %s
+                    order by created_at, id
+                    """,
+                    (review_id,),
+                ).fetchall()
+        return [RightsDecisionEvent.model_validate(row) for row in rows]
 
     def list_sets(
         self,

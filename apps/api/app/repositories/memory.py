@@ -18,6 +18,13 @@ from app.schemas import (
     MergeDecisionAction,
     MergeScore,
     ReviewStatus,
+    RightsDecisionAction,
+    RightsDecisionEvent,
+    RightsEvidence,
+    RightsReview,
+    RightsReviewCreate,
+    RightsReviewPage,
+    RightsReviewStatus,
     SearchProfile,
     SearchProfileCreate,
     SearchProfileUpdate,
@@ -35,6 +42,7 @@ from app.schemas.import_job import validate_job_transition
 from app.repositories.base import ActiveProfileJobsError
 from app.services.heuristic import HeuristicConfig, ScoreResult
 from app.services.normalizer import RawSetPayload
+from app.services.rights_policy import rights_evidence_complete
 from app.services.merge_scoring import (
     MERGE_SUGGESTION_THRESHOLD,
     score_set_merge,
@@ -179,6 +187,8 @@ class InMemoryRepository:
         self._provider_items: dict[tuple[str, str], ProviderItemPayload] = {}
         self.merge_candidates: dict[UUID, MergeCandidate] = {}
         self.merge_decisions: list[MergeDecision] = []
+        self.rights_reviews: dict[UUID, RightsReview] = {}
+        self.rights_decisions: list[RightsDecisionEvent] = []
         self.jobs: dict[UUID, ImportJob] = {}
         self.profiles: dict[UUID, SearchProfile] = {}
         self._deleted_profile_ids: set[UUID] = set()
@@ -1219,6 +1229,234 @@ class InMemoryRepository:
                 deepcopy(item)
                 for item in self.merge_decisions
                 if item.merge_candidate_id == candidate_id
+            ]
+
+    def create_rights_review(
+        self,
+        payload: RightsReviewCreate,
+        *,
+        actor: str,
+    ) -> RightsReview:
+        with self._lock:
+            record = self.sets.get(payload.set_id)
+            if record is None or record.duplicate_of_id is not None:
+                raise ValueError("rights review requires an active set")
+            source_identities = {
+                (item.provider_key, item.external_id)
+                for item in self.list_set_provider_sources(payload.set_id)
+            }
+            if (
+                payload.provider_key,
+                payload.provider_external_id,
+            ) not in source_identities:
+                raise ValueError("rights evidence provider source is not linked")
+            for existing in self.rights_reviews.values():
+                if (
+                    existing.set_id == payload.set_id
+                    and existing.provider_key == payload.provider_key
+                    and existing.provider_external_id
+                    == payload.provider_external_id
+                    and existing.requested_stream == payload.requested_stream
+                    and existing.requested_download
+                    == payload.requested_download
+                    and existing.status is RightsReviewStatus.pending
+                ):
+                    return deepcopy(existing)
+            review_id = uuid4()
+            evidence = [
+                RightsEvidence(
+                    **item.model_dump(),
+                    rights_review_id=review_id,
+                    submitted_by=actor,
+                )
+                for item in payload.evidence
+            ]
+            review = RightsReview(
+                id=review_id,
+                set_id=payload.set_id,
+                provider_key=payload.provider_key,
+                provider_external_id=payload.provider_external_id,
+                requested_stream=payload.requested_stream,
+                requested_download=payload.requested_download,
+                evidence=evidence,
+                submitted_by=actor,
+            )
+            self.rights_reviews[review_id] = review
+            return deepcopy(review)
+
+    def get_rights_review(self, review_id: UUID) -> RightsReview | None:
+        with self._lock:
+            review = self.rights_reviews.get(review_id)
+            return deepcopy(review) if review is not None else None
+
+    def list_rights_reviews(
+        self,
+        *,
+        status: RightsReviewStatus | None,
+        limit: int,
+        offset: int,
+    ) -> RightsReviewPage:
+        with self._lock:
+            values = [
+                item
+                for item in self.rights_reviews.values()
+                if status is None or item.status is status
+            ]
+            values.sort(
+                key=lambda item: (item.created_at, str(item.id)),
+                reverse=True,
+            )
+            return RightsReviewPage(
+                items=[deepcopy(item) for item in values[offset : offset + limit]],
+                total=len(values),
+                limit=limit,
+                offset=offset,
+            )
+
+    def _rights_state_unlocked(self, review: RightsReview) -> dict[str, object]:
+        return {
+            "status": review.status.value,
+            "requested_stream": review.requested_stream,
+            "requested_download": review.requested_download,
+            "allow_stream": review.allow_stream,
+            "allow_download": review.allow_download,
+            "evidence_ids": [str(item.id) for item in review.evidence],
+        }
+
+    def _decide_rights_review_unlocked(
+        self,
+        review_id: UUID,
+        *,
+        actor: str,
+        action: RightsDecisionAction,
+        reason: str,
+        allow_stream: bool,
+        allow_download: bool,
+    ) -> RightsReview | None:
+        review = self.rights_reviews.get(review_id)
+        if review is None:
+            return None
+        target_status = {
+            RightsDecisionAction.approve: RightsReviewStatus.approved,
+            RightsDecisionAction.reject: RightsReviewStatus.rejected,
+            RightsDecisionAction.expire: RightsReviewStatus.expired,
+        }[action]
+        if review.status is target_status:
+            if (
+                review.allow_stream == allow_stream
+                and review.allow_download == allow_download
+                and review.decision_reason == reason
+            ):
+                return deepcopy(review)
+            return None
+        allowed_source_statuses = {RightsReviewStatus.pending}
+        if action is RightsDecisionAction.expire:
+            allowed_source_statuses.add(RightsReviewStatus.approved)
+        if review.status not in allowed_source_statuses:
+            return None
+        if allow_stream and not review.requested_stream:
+            raise ValueError("rights approval exceeds requested permissions")
+        if allow_download and not review.requested_download:
+            raise ValueError("rights approval exceeds requested permissions")
+        if (
+            action is RightsDecisionAction.approve
+            and not allow_stream
+            and not allow_download
+        ):
+            raise ValueError("rights approval must grant a requested permission")
+        if action is RightsDecisionAction.approve and not rights_evidence_complete(
+            tuple(review.evidence)
+        ):
+            raise ValueError("rights evidence is incomplete")
+        before = self._rights_state_unlocked(review)
+        now = _now()
+        updated = review.model_copy(
+            update={
+                "status": target_status,
+                "allow_stream": allow_stream,
+                "allow_download": allow_download,
+                "decided_by": actor,
+                "decision_reason": reason,
+                "decided_at": now,
+                "expires_at": now if action is RightsDecisionAction.expire else None,
+                "updated_at": now,
+            }
+        )
+        self.rights_reviews[review_id] = updated
+        self.rights_decisions.append(
+            RightsDecisionEvent(
+                rights_review_id=review_id,
+                action=action,
+                actor=actor,
+                reason=reason,
+                before_state=before,
+                after_state=self._rights_state_unlocked(updated),
+            )
+        )
+        return deepcopy(updated)
+
+    def approve_rights_review(
+        self,
+        review_id: UUID,
+        *,
+        actor: str,
+        allow_stream: bool,
+        allow_download: bool,
+        reason: str,
+    ) -> RightsReview | None:
+        with self._lock:
+            return self._decide_rights_review_unlocked(
+                review_id,
+                actor=actor,
+                action=RightsDecisionAction.approve,
+                reason=reason,
+                allow_stream=allow_stream,
+                allow_download=allow_download,
+            )
+
+    def reject_rights_review(
+        self,
+        review_id: UUID,
+        *,
+        actor: str,
+        reason: str,
+    ) -> RightsReview | None:
+        with self._lock:
+            return self._decide_rights_review_unlocked(
+                review_id,
+                actor=actor,
+                action=RightsDecisionAction.reject,
+                reason=reason,
+                allow_stream=False,
+                allow_download=False,
+            )
+
+    def expire_rights_review(
+        self,
+        review_id: UUID,
+        *,
+        actor: str,
+        reason: str,
+    ) -> RightsReview | None:
+        with self._lock:
+            return self._decide_rights_review_unlocked(
+                review_id,
+                actor=actor,
+                action=RightsDecisionAction.expire,
+                reason=reason,
+                allow_stream=False,
+                allow_download=False,
+            )
+
+    def list_rights_decisions(
+        self,
+        review_id: UUID,
+    ) -> list[RightsDecisionEvent]:
+        with self._lock:
+            return [
+                deepcopy(item)
+                for item in self.rights_decisions
+                if item.rights_review_id == review_id
             ]
 
     def _merge_state_unlocked(

@@ -14,6 +14,13 @@ from app.schemas.merge import (
     SetProviderSource,
 )
 from app.schemas.profile import SearchProfile, SearchProfileCreate, SearchProfileUpdate
+from app.schemas.rights import (
+    RightsDecisionEvent,
+    RightsReview,
+    RightsReviewCreate,
+    RightsReviewPage,
+    RightsReviewStatus,
+)
 from app.schemas.set import ReviewStatus, SetDetail, SetPage, SetPatch, SetSource
 from app.services.heuristic import HeuristicConfig, ScoreResult
 from app.services.normalizer import RawSetPayload
@@ -205,6 +212,54 @@ class Repository(Protocol):
         self,
         set_id: UUID,
     ) -> list[SetProviderSource]: ...
+
+    def create_rights_review(
+        self,
+        payload: RightsReviewCreate,
+        *,
+        actor: str,
+    ) -> RightsReview: ...
+
+    def get_rights_review(self, review_id: UUID) -> RightsReview | None: ...
+
+    def list_rights_reviews(
+        self,
+        *,
+        status: RightsReviewStatus | None,
+        limit: int,
+        offset: int,
+    ) -> RightsReviewPage: ...
+
+    def approve_rights_review(
+        self,
+        review_id: UUID,
+        *,
+        actor: str,
+        allow_stream: bool,
+        allow_download: bool,
+        reason: str,
+    ) -> RightsReview | None: ...
+
+    def reject_rights_review(
+        self,
+        review_id: UUID,
+        *,
+        actor: str,
+        reason: str,
+    ) -> RightsReview | None: ...
+
+    def expire_rights_review(
+        self,
+        review_id: UUID,
+        *,
+        actor: str,
+        reason: str,
+    ) -> RightsReview | None: ...
+
+    def list_rights_decisions(
+        self,
+        review_id: UUID,
+    ) -> list[RightsDecisionEvent]: ...
 
     def list_sets(
         self,
