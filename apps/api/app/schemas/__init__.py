@@ -20,6 +20,19 @@ from app.schemas.merge import (
     SetProviderSource,
 )
 from app.schemas.profile import SearchProfile, SearchProfileCreate, SearchProfileUpdate
+from app.schemas.rights import (
+    RightsDecisionAction,
+    RightsDecisionEvent,
+    RightsEvidence,
+    RightsEvidenceInput,
+    RightsEvidenceType,
+    RightsReview,
+    RightsReviewApproval,
+    RightsReviewCreate,
+    RightsReviewPage,
+    RightsReviewResolution,
+    RightsReviewStatus,
+)
 from app.schemas.set import (
     ReviewStatus,
     SetDetail,
@@ -46,6 +59,17 @@ __all__ = [
     "MergeDecisionAction",
     "MergeScore",
     "ReviewStatus",
+    "RightsDecisionAction",
+    "RightsDecisionEvent",
+    "RightsEvidence",
+    "RightsEvidenceInput",
+    "RightsEvidenceType",
+    "RightsReview",
+    "RightsReviewApproval",
+    "RightsReviewCreate",
+    "RightsReviewPage",
+    "RightsReviewResolution",
+    "RightsReviewStatus",
     "SearchProfile",
     "SearchProfileCreate",
     "SearchProfileUpdate",

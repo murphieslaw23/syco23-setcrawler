@@ -20,6 +20,7 @@ from app.routers import (
     imports,
     merge_candidates,
     providers,
+    rights_reviews,
     search_profiles,
     sets,
     stats,
@@ -98,6 +99,7 @@ def create_app(
     app.include_router(sets.router)
     app.include_router(candidates.router)
     app.include_router(merge_candidates.router)
+    app.include_router(rights_reviews.router)
     app.include_router(search_profiles.router)
     app.include_router(stats.router)
     return app
