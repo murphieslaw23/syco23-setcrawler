@@ -22,6 +22,11 @@ celery_app.conf.update(
             "task": "app.workers.normalize_worker.redrive_import_jobs",
             "schedule": settings.job_redrive_interval_seconds,
         },
+        "schedule-enabled-provider-profiles": {
+            "task": "app.workers.profile_scheduler.schedule_profiles",
+            "schedule": 60,
+            "options": {"queue": "process"},
+        },
     },
     # Compatibility window: legacy producers without an explicit queue still
     # land on aliases consumed by the workload-class workers. Registry-driven
@@ -36,6 +41,7 @@ celery_app.conf.update(
 celery_app.conf.imports = (
     "app.workers.ftm_scraper",
     "app.workers.normalize_worker",
+    "app.workers.profile_scheduler",
     "app.workers.soundcloud_importer",
     "app.workers.youtube_poller",
 )

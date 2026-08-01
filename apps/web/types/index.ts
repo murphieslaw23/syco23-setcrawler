@@ -90,6 +90,13 @@ export interface ProviderStatus {
   configured: boolean
   enabled: boolean
   mode: string
+  display_name?: string
+  capabilities?: string[]
+  workloads?: Record<string, string>
+  configuration_complete?: boolean
+  effective_enabled?: boolean
+  database_enabled?: boolean
+  reason?: string | null
 }
 
 export type ProviderHealthStatus = Record<SetSource, ProviderStatus>
@@ -98,9 +105,13 @@ export interface SearchProfile {
   id: string
   name: string
   query: string
-  source: 'youtube'
+  source: string
+  operation: string
+  parameters: Record<string, unknown>
   schedule_cron: string
   last_run_at: string | null
+  last_scheduled_at: string | null
+  next_scheduled_at: string | null
   next_page_token: string | null
   last_result_count: number | null
   last_error_code: string | null

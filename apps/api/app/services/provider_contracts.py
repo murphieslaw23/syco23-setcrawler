@@ -206,7 +206,11 @@ class ProviderDescriptor:
     url_matchers: tuple[Pattern[str], ...]
     required_settings: tuple[str, ...] = ()
     enabled_by_default: bool = True
+    enabled_setting: str | None = None
+    public_health_key: str | None = None
+    health_mode: str = "descriptor"
     descriptor_version: int = 1
+    discovery_operations: Mapping[str, frozenset[str]] = field(default_factory=dict)
     task_by_capability: Mapping[ProviderCapability, str] = field(
         default_factory=dict
     )
@@ -225,3 +229,15 @@ class ProviderDescriptor:
         )
         object.__setattr__(self, "url_matchers", tuple(self.url_matchers))
         object.__setattr__(self, "required_settings", tuple(self.required_settings))
+        if self.public_health_key is None:
+            object.__setattr__(self, "public_health_key", self.key)
+        object.__setattr__(
+            self,
+            "discovery_operations",
+            MappingProxyType(
+                {
+                    operation: frozenset(parameters)
+                    for operation, parameters in self.discovery_operations.items()
+                }
+            ),
+        )

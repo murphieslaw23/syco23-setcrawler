@@ -88,7 +88,7 @@ async function run(profile: SearchProfile) {
 
 <template>
   <section>
-    <PageHeader title="Search Profiles" count="YOUTUBE QUOTA-CONTROLLED POLLING" />
+    <PageHeader title="Search Profiles" count="DESCRIPTOR-DRIVEN PROVIDER SCHEDULING" />
     <p v-if="error" class="form-message error" role="alert">Profiles unavailable: {{ error.message }}</p>
     <p v-if="message" class="form-message" role="status">{{ message }}</p>
     <p v-if="actionError" class="form-message error" role="alert">{{ actionError }}</p>
@@ -102,6 +102,8 @@ async function run(profile: SearchProfile) {
           <label class="profile-enabled"><input :checked="profile.enabled" type="checkbox" :disabled="!isAdmin || busyId === profile.id" @change="update(profile, { enabled: ($event.target as HTMLInputElement).checked })"> enabled</label>
           <dl class="profile-run-state">
             <div><dt>Last run</dt><dd>{{ profile.last_run_at ? formatDate(profile.last_run_at) : 'Never' }}</dd></div>
+            <div><dt>Last scheduled</dt><dd>{{ profile.last_scheduled_at ? formatDate(profile.last_scheduled_at) : 'Never' }}</dd></div>
+            <div><dt>Next scheduled</dt><dd>{{ profile.next_scheduled_at ? formatDate(profile.next_scheduled_at) : 'Pending' }}</dd></div>
             <div><dt>Results</dt><dd>{{ profile.last_result_count ?? '—' }}</dd></div>
             <div><dt>Next page</dt><dd>{{ profile.next_page_token || 'Start' }}</dd></div>
           </dl>
@@ -115,7 +117,7 @@ async function run(profile: SearchProfile) {
         </article>
       </section>
       <form v-if="isAdmin" class="plate create-profile" @submit.prevent="addProfile">
-        <p class="utility-label">New profile</p><h2>Add YouTube query</h2>
+        <p class="utility-label">New profile</p><h2>Add provider query</h2>
         <label>Name<input v-model="name" required placeholder="Crew or genre profile"></label>
         <label>Search query<input v-model="query" required placeholder="freetekno liveset"></label>
         <label>Schedule<input v-model="schedule" required></label>

@@ -1012,14 +1012,40 @@ class InMemoryRepository:
                 )
             return (
                 self.create_job(
-                url=f"youtube-search://{profile.query}",
+                url=f"{profile.source}-{profile.operation}://{profile.query}",
                 source=SetSource.youtube,
                 job_type=JobType.search_profile,
                 profile_id=profile_id,
-                details={"query": profile.query},
+                details={
+                    "provider_key": profile.source,
+                    "capability": "discovery",
+                    "operation": profile.operation,
+                    "parameters": profile.parameters,
+                    "query": profile.query,
+                },
                 ),
                 True,
             )
+
+    def mark_profile_scheduled(
+        self,
+        profile_id: UUID,
+        *,
+        scheduled_at: datetime,
+        next_scheduled_at: datetime,
+    ) -> SearchProfile | None:
+        with self._lock:
+            profile = self.profiles.get(profile_id)
+            if profile is None or profile_id in self._deleted_profile_ids:
+                return None
+            updated = profile.model_copy(
+                update={
+                    "last_scheduled_at": scheduled_at,
+                    "next_scheduled_at": next_scheduled_at,
+                }
+            )
+            self.profiles[profile_id] = updated
+            return deepcopy(updated)
 
     def _latest_profile_job(self, profile_id: UUID) -> ImportJob | None:
         jobs = [
