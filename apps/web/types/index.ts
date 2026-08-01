@@ -119,3 +119,42 @@ export interface SearchProfile {
   latest_job_id: string | null
   enabled: boolean
 }
+
+export type MergeCandidateStatus = 'pending' | 'approved' | 'rejected' | 'restored'
+
+export interface MergeComponentScores {
+  title_artist: number
+  event: number
+  date_year: number
+  duration: number
+  aliases: number
+}
+
+export interface MergeCandidate {
+  id: string
+  source_set_id: string
+  target_set_id: string
+  score: number
+  component_scores: MergeComponentScores
+  reasons: string[]
+  status: MergeCandidateStatus
+  reviewed_by: string | null
+  reviewed_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface MergeCandidatePage {
+  items: MergeCandidate[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface SetProviderSource {
+  provider_key: string
+  external_id: string
+  canonical_url: string
+  embed_url: string | null
+  is_primary: boolean
+}

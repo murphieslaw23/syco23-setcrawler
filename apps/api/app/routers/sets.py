@@ -6,7 +6,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from app.core.auth import CurrentUser, require_admin, require_editor, require_viewer
 from app.core.dependencies import get_repository
 from app.repositories.base import Repository
-from app.schemas import ReviewStatus, SetDetail, SetPage, SetPatch, SetSource
+from app.schemas import (
+    ReviewStatus,
+    SetDetail,
+    SetPage,
+    SetPatch,
+    SetProviderSource,
+    SetSource,
+)
 
 router = APIRouter(prefix="/sets", tags=["sets"])
 RepositoryDependency = Annotated[Repository, Depends(get_repository)]
@@ -46,6 +53,21 @@ def get_set(
     if not record:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Set not found")
     return record
+
+
+@router.get("/{set_id}/sources", response_model=list[SetProviderSource])
+def list_set_sources(
+    set_id: UUID,
+    repository: RepositoryDependency,
+    _: Viewer,
+) -> list[SetProviderSource]:
+    record = repository.get_set(set_id)
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Set not found",
+        )
+    return repository.list_set_provider_sources(set_id)
 
 
 @router.patch("/{set_id}", response_model=SetDetail)

@@ -8,6 +8,7 @@ describe('editorial UI contracts', () => {
     expect(navigation.map((item) => item.label)).toEqual([
       'Overview',
       'Review Inbox',
+      'Merge Review',
       'Imports',
       'Sets',
       'Artists',

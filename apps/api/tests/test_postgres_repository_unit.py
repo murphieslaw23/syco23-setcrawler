@@ -133,7 +133,7 @@ def test_persist_processed_set_locks_fingerprint_and_processing_job() -> None:
         [
             "fingerprint:atomic-fingerprint",
             "source:soundcloud:atomic-persist",
-            "url:https://soundcloud.com/syco23/atomic-persist",
+                "url:soundcloud:https://soundcloud.com/syco23/atomic-persist",
         ]
     )
     assert [params[0] for _, params in advisory_calls] == expected_identities
