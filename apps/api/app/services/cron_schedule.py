@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 def _field_matches(value: int, expression: str, *, minimum: int, maximum: int) -> bool:
@@ -24,29 +25,73 @@ def _field_matches(value: int, expression: str, *, minimum: int, maximum: int) -
     return False
 
 
-def cron_matches(expression: str, value: datetime) -> bool:
+def validate_timezone(value: str) -> str:
+    if value != value.strip() or not value or value.casefold() == "local":
+        raise ValueError("schedule_timezone must be an IANA timezone")
+    try:
+        ZoneInfo(value)
+    except ZoneInfoNotFoundError as error:
+        raise ValueError("schedule_timezone must be an IANA timezone") from error
+    return value
+
+
+def cron_matches(
+    expression: str,
+    value: datetime,
+    *,
+    timezone: str = "UTC",
+) -> bool:
     fields = expression.split()
     if len(fields) != 5:
         raise ValueError("schedule_cron must contain five fields")
+    if value.tzinfo is None:
+        raise ValueError("cron comparison must be timezone-aware")
+    local_value = value.astimezone(ZoneInfo(validate_timezone(timezone)))
     minute, hour, day, month, weekday = fields
-    cron_weekday = (value.weekday() + 1) % 7
+    cron_weekday = (local_value.weekday() + 1) % 7
+    day_matches = _field_matches(local_value.day, day, minimum=1, maximum=31)
+    weekday_matches = _field_matches(cron_weekday, weekday, minimum=0, maximum=6)
+    if day == "*":
+        calendar_day_matches = weekday_matches
+    elif weekday == "*":
+        calendar_day_matches = day_matches
+    else:
+        calendar_day_matches = day_matches or weekday_matches
     return all(
         (
-            _field_matches(value.minute, minute, minimum=0, maximum=59),
-            _field_matches(value.hour, hour, minimum=0, maximum=23),
-            _field_matches(value.day, day, minimum=1, maximum=31),
-            _field_matches(value.month, month, minimum=1, maximum=12),
-            _field_matches(cron_weekday, weekday, minimum=0, maximum=6),
+            _field_matches(local_value.minute, minute, minimum=0, maximum=59),
+            _field_matches(local_value.hour, hour, minimum=0, maximum=23),
+            calendar_day_matches,
+            _field_matches(local_value.month, month, minimum=1, maximum=12),
         )
     )
 
 
-def next_cron_time(expression: str, after: datetime) -> datetime:
+def next_cron_time(
+    expression: str,
+    after: datetime,
+    *,
+    timezone: str = "UTC",
+) -> datetime:
     candidate = after.astimezone(UTC).replace(second=0, microsecond=0) + timedelta(minutes=1)
     for _ in range(366 * 24 * 60):
-        if cron_matches(expression, candidate):
+        if cron_matches(expression, candidate, timezone=timezone):
             return candidate
         candidate += timedelta(minutes=1)
+    raise ValueError("schedule_cron has no occurrence within one year")
+
+
+def previous_cron_time(
+    expression: str,
+    at: datetime,
+    *,
+    timezone: str = "UTC",
+) -> datetime:
+    candidate = at.astimezone(UTC).replace(second=0, microsecond=0)
+    for _ in range(366 * 24 * 60):
+        if cron_matches(expression, candidate, timezone=timezone):
+            return candidate
+        candidate -= timedelta(minutes=1)
     raise ValueError("schedule_cron has no occurrence within one year")
 
 

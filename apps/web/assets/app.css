@@ -661,6 +661,9 @@ h3 {
 .profile-row input { width: 100%; border: 1px solid var(--line-soft); color: var(--bone); background: #12100e; font: 700 10px/1 var(--mono); }
 .profile-row__fields input { padding: 8px; }
 .profile-cron { padding: 8px; }
+.profile-schedule { display: grid; gap: 6px; }
+.profile-schedule label { display: grid; gap: 5px; color: var(--muted); font: 700 8px/1 var(--mono); letter-spacing: .04em; text-transform: uppercase; }
+.profile-schedule input { padding: 8px; }
 .profile-enabled { color: var(--muted); font: 700 8px/1 var(--mono); text-transform: uppercase; }
 .profile-row__actions { display: flex; gap: 5px; align-items: center; justify-content: flex-end; }
 .profile-run-state { grid-column: 2 / 5; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; }
@@ -1714,7 +1717,7 @@ h3 {
   .job-row > .job-state { justify-self: start; }
   .job-row > .secondary-button { justify-self: end; }
   .profile-row { grid-template-columns: 9px minmax(0, 1fr); }
-  .profile-cron, .profile-enabled, .profile-row__actions,
+  .profile-schedule, .profile-enabled, .profile-row__actions,
   .profile-run-state, .profile-row > .form-message,
   .profile-row > .text-button { grid-column: 2; }
   .profile-run-state { grid-template-columns: 1fr; }

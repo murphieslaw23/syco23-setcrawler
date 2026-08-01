@@ -293,6 +293,7 @@ def build_provider_descriptors(settings: Settings) -> tuple[ProviderDescriptor, 
                 ProviderCapability.license_evidence: ProviderWorkload.provider_scrape,
             },
             task_by_capability={
+                ProviderCapability.discovery: "app.workers.ftm_scraper.crawl_profile",
                 ProviderCapability.metadata: "app.workers.ftm_scraper.import_url",
             },
             adapter_factory=ftm_factory,

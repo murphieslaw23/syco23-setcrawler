@@ -10,6 +10,9 @@ const root = process.cwd()
 describe('operator surfaces', () => {
   it('carries every profile run diagnostic in the frontend contract fixture', () => {
     expect(demoProfiles[0]).toMatchObject({
+      schedule_timezone: 'Europe/Berlin',
+      last_scheduled_at: '2026-07-28T06:00:00Z',
+      next_scheduled_at: '2026-07-29T06:00:00Z',
       next_page_token: 'NEXT_PAGE_23',
       last_result_count: 12,
       last_error_code: null,
@@ -21,7 +24,10 @@ describe('operator surfaces', () => {
     const source = readFileSync(`${root}/pages/search-profiles/index.vue`, 'utf8')
     for (const field of [
       'profile.next_page_token',
+      'profile.schedule_timezone',
       'profile.last_run_at',
+      'profile.last_scheduled_at',
+      'profile.next_scheduled_at',
       'profile.last_result_count',
       'profile.last_error_code',
       'profile.latest_job_id'

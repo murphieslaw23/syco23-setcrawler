@@ -8,7 +8,9 @@ from celery.exceptions import Retry
 from app.core.config import Settings
 from app.repository import InMemoryRepository
 from app.schemas.import_job import JobStatus, JobType
+from app.schemas.profile import SearchProfileCreate
 from app.schemas.set import SetSource
+from app.services.normalizer import normalize_raw_payload
 from app.services.provider import (
     ProviderBlockedError,
     ProviderTemporaryError,
@@ -537,3 +539,109 @@ def test_temporary_ftm_error_retries_with_common_schedule(
 
     assert retry.value.when == 5
     assert repository.get_job(job.id).status is JobStatus.retry
+
+
+def test_ftm_profile_crawl_is_durable_idempotent_metadata_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.workers import ftm_scraper
+
+    repository = InMemoryRepository()
+    profile = repository.create_profile(
+        SearchProfileCreate(
+            name="Weekly FTM crawl",
+            query="freeteknomusic metadata",
+            source="ftm",
+            operation="crawl",
+            parameters={"start_url": FTM_URL},
+            schedule_cron="0 4 * * 1",
+        )
+    )
+    parent = repository.queue_profile(profile.id)
+    assert parent is not None
+    payloads = [
+        normalize_raw_payload(
+            "freeteknomusic",
+            {
+                "id": source_id,
+                "webpage_url": f"{BASE}/sets/{source_id}",
+                "title": f"Set {source_id}",
+                "duration_seconds": 3600,
+            },
+        )
+        for source_id in ("first", "second")
+    ]
+
+    class Adapter:
+        calls: list[tuple[str, int | None]] = []
+
+        async def crawl(self, start_url: str, *, max_pages: int | None = None):
+            self.calls.append((start_url, max_pages))
+            return payloads
+
+    processed: list[str] = []
+    finalized: list[tuple[tuple[str, ...], dict]] = []
+    monkeypatch.setattr(ftm_scraper, "get_worker_repository", lambda: repository)
+    monkeypatch.setattr(ftm_scraper, "get_ftm_adapter", Adapter)
+    monkeypatch.setattr(
+        ftm_scraper,
+        "dispatch_process_payload",
+        lambda _job_id, payload, _claim: processed.append(payload.source_id),
+    )
+    monkeypatch.setattr(
+        ftm_scraper.finalize_ftm_profile,
+        "apply_async",
+        lambda args=(), **kwargs: finalized.append((args, kwargs)),
+    )
+
+    assert ftm_scraper.run_ftm_profile.run(str(parent.id)) is None
+
+    current = repository.get_job(parent.id)
+    assert current is not None and current.status is JobStatus.processing
+    assert Adapter.calls == [(FTM_URL, 25)]
+    assert processed == ["first", "second"]
+    assert len(finalized) == 1
+    children = [
+        job
+        for job in repository.jobs.values()
+        if job.details.get("profile_job_id") == str(parent.id)
+    ]
+    assert len(children) == 2
+    assert all(job.source is SetSource.freeteknomusic for job in children)
+
+    for child in children:
+        repository.jobs[child.id] = child.model_copy(
+            update={
+                "status": JobStatus.completed,
+                "details": {**child.details, "outcome": "persisted"},
+            }
+        )
+    owner = repository.get_job(parent.id).started_at
+    assert owner is not None
+
+    assert ftm_scraper.finalize_ftm_profile.run(
+        str(parent.id),
+        owner.isoformat(),
+    ) == {"result_count": 2, "discard_count": 0, "duplicate_count": 0}
+    assert repository.get_job(parent.id).status is JobStatus.completed
+
+
+def test_ftm_descriptor_routes_weekly_discovery_to_scrape_worker() -> None:
+    from app.services.provider import build_provider_registry
+    from app.services.provider_contracts import ProviderCapability, ProviderWorkload
+
+    registry = build_provider_registry(
+        Settings(
+            environment="fixture",
+            repository_mode="memory",
+            provider_mode="live",
+            ftm_scraper_enabled=True,
+        )
+    )
+    descriptor = registry.get("ftm")
+
+    assert descriptor.discovery_operations == {"crawl": frozenset({"start_url"})}
+    assert descriptor.workload_by_capability[ProviderCapability.discovery] is ProviderWorkload.provider_scrape
+    assert descriptor.task_by_capability[ProviderCapability.discovery] == (
+        "app.workers.ftm_scraper.crawl_profile"
+    )

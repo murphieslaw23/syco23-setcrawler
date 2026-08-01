@@ -1,5 +1,8 @@
 from datetime import UTC, datetime
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 import re
+from threading import Barrier
 
 from fastapi.testclient import TestClient
 
@@ -155,6 +158,167 @@ def test_scheduler_dispatches_due_fixture_profile_from_descriptor() -> None:
     assert updated.next_scheduled_at == datetime(2026, 8, 2, 6, 0, tzinfo=UTC)
 
 
+def test_scheduler_runs_one_missed_occurrence_after_restart() -> None:
+    repository = InMemoryRepository()
+    profile = SearchProfile(
+        name="Restarted search",
+        query="warehouse liveset",
+        source="fixture",
+        operation="search",
+        parameters={"term": "warehouse liveset"},
+        schedule_cron="0 6 * * *",
+        schedule_timezone="Europe/Berlin",
+        created_at=datetime(2026, 7, 31, 12, 0, tzinfo=UTC),
+    )
+    repository.profiles[profile.id] = profile
+    dispatcher = _SchedulerDispatcher(repository)
+
+    result = schedule_due_profiles(
+        repository,
+        dispatcher,
+        ProviderRegistry.build((_descriptor(),)),
+        Settings(
+            environment="fixture",
+            repository_mode="memory",
+            provider_mode="live",
+        ),
+        now=datetime(2026, 8, 1, 8, 15, tzinfo=UTC),
+    )
+
+    assert result == {"due": 1, "created": 1, "dispatched": 1}
+    updated = repository.get_profile(profile.id)
+    assert updated is not None
+    assert updated.last_scheduled_at == datetime(2026, 8, 1, 8, 15, tzinfo=UTC)
+    assert updated.next_scheduled_at == datetime(2026, 8, 2, 4, 0, tzinfo=UTC)
+
+
+def test_scheduler_does_not_backfill_before_profile_creation() -> None:
+    repository = InMemoryRepository()
+    profile = SearchProfile(
+        name="New search",
+        query="warehouse liveset",
+        source="fixture",
+        operation="search",
+        parameters={"term": "warehouse liveset"},
+        schedule_cron="0 6 * * *",
+        created_at=datetime(2026, 8, 1, 7, 0, tzinfo=UTC),
+    )
+    repository.profiles[profile.id] = profile
+    dispatcher = _SchedulerDispatcher(repository)
+
+    result = schedule_due_profiles(
+        repository,
+        dispatcher,
+        ProviderRegistry.build((_descriptor(),)),
+        Settings(
+            environment="fixture",
+            repository_mode="memory",
+            provider_mode="live",
+        ),
+        now=datetime(2026, 8, 1, 8, 15, tzinfo=UTC),
+    )
+
+    assert result == {"due": 0, "created": 0, "dispatched": 0}
+    assert dispatcher.calls == []
+
+
+def test_duplicate_scheduler_ticks_dispatch_one_active_profile_job() -> None:
+    repository = InMemoryRepository()
+    profile = SearchProfile(
+        name="Duplicate-safe search",
+        query="warehouse liveset",
+        source="fixture",
+        operation="search",
+        parameters={"term": "warehouse liveset"},
+        schedule_cron="0 6 * * *",
+        created_at=datetime(2026, 7, 31, 12, 0, tzinfo=UTC),
+    )
+    repository.profiles[profile.id] = profile
+    dispatcher = _SchedulerDispatcher(repository)
+    registry = ProviderRegistry.build((_descriptor(),))
+    settings = Settings(
+        environment="fixture",
+        repository_mode="memory",
+        provider_mode="live",
+    )
+    now = datetime(2026, 8, 1, 8, 15, tzinfo=UTC)
+
+    first = schedule_due_profiles(repository, dispatcher, registry, settings, now=now)
+    second = schedule_due_profiles(repository, dispatcher, registry, settings, now=now)
+
+    assert first == {"due": 1, "created": 1, "dispatched": 1}
+    assert second == {"due": 0, "created": 0, "dispatched": 0}
+    assert len(dispatcher.calls) == 1
+
+
+def test_duplicate_scheduler_processes_cannot_overlap_profile_jobs() -> None:
+    barrier = Barrier(2)
+
+    class ConcurrentSchedulerRepository(InMemoryRepository):
+        def list_profiles(self):
+            profiles = super().list_profiles()
+            barrier.wait()
+            return profiles
+
+    repository = ConcurrentSchedulerRepository()
+    profile = SearchProfile(
+        name="Concurrent scheduler search",
+        query="warehouse liveset",
+        source="fixture",
+        operation="search",
+        parameters={"term": "warehouse liveset"},
+        schedule_cron="0 6 * * *",
+        created_at=datetime(2026, 7, 31, 12, 0, tzinfo=UTC),
+    )
+    repository.profiles[profile.id] = profile
+    dispatcher = _SchedulerDispatcher(repository)
+    registry = ProviderRegistry.build((_descriptor(),))
+    settings = Settings(
+        environment="fixture",
+        repository_mode="memory",
+        provider_mode="live",
+    )
+
+    def schedule_once():
+        return schedule_due_profiles(
+            repository,
+            dispatcher,
+            registry,
+            settings,
+            now=datetime(2026, 8, 1, 8, 15, tzinfo=UTC),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _: schedule_once(), range(2)))
+
+    assert sum(result["created"] for result in results) == 1
+    assert sum(result["dispatched"] for result in results) == 1
+    assert len(dispatcher.calls) == 1
+
+
+def test_profile_api_rejects_unknown_schedule_timezone() -> None:
+    repository = InMemoryRepository()
+    client = TestClient(
+        create_app(
+            repository,
+            settings=Settings(environment="fixture", repository_mode="memory"),
+            dispatcher=RecordingDispatcher(),
+        )
+    )
+
+    response = client.post(
+        "/search-profiles",
+        json={
+            "name": "Invalid timezone",
+            "query": "warehouse liveset",
+            "schedule_timezone": "local",
+        },
+    )
+
+    assert response.status_code == 422
+    assert repository.list_profiles() == []
+
+
 def test_scheduler_skips_disabled_provider_without_advancing_profile() -> None:
     repository = InMemoryRepository()
     profile = repository.create_profile(
@@ -292,3 +456,19 @@ def test_profile_manual_run_rejects_effectively_disabled_provider() -> None:
 
     assert response.status_code == 409
     assert response.json()["detail"] == "provider_configuration_missing"
+
+
+def test_scheduler_migration_adds_timezone_and_safe_weekly_ftm_profile() -> None:
+    migration = (
+        Path(__file__).parents[3]
+        / "supabase/migrations/20260801150000_scheduler_hardening.sql"
+    ).read_text().casefold()
+
+    assert "schedule_timezone text not null default 'utc'" in migration
+    assert "'weekly ftm metadata crawl'" in migration
+    assert "'ftm'" in migration
+    assert "'crawl'" in migration
+    assert "https://freeteknomusic.org/sets/23hz" in migration
+    assert "'0 4 * * 1'" in migration
+    assert "download" not in migration
+    assert "audio" not in migration
