@@ -28,6 +28,7 @@ from app.schemas.import_job import validate_job_transition
 from app.repositories.base import ActiveProfileJobsError
 from app.services.heuristic import HeuristicConfig, ScoreResult
 from app.services.normalizer import RawSetPayload
+from app.services.provider_contracts import ProviderItemPayload
 from app.services.provider_sources import (
     ProviderSourceProjection,
     legacy_source_to_provider_key,
@@ -161,6 +162,7 @@ class InMemoryRepository:
     def __init__(self) -> None:
         self.sets: dict[UUID, SetDetail] = {}
         self._provider_sources: dict[UUID, ProviderSourceProjection] = {}
+        self._provider_items: dict[tuple[str, str], ProviderItemPayload] = {}
         self.jobs: dict[UUID, ImportJob] = {}
         self.profiles: dict[UUID, SearchProfile] = {}
         self._deleted_profile_ids: set[UUID] = set()
@@ -952,6 +954,79 @@ class InMemoryRepository:
                 }
             )
         return deepcopy(updated_job)
+
+    def complete_provider_discovery(
+        self,
+        job_id: UUID,
+        claim_started_at: datetime,
+        *,
+        provider_key: str,
+        items: tuple[ProviderItemPayload, ...],
+        next_cursor: str | None,
+    ) -> ImportJob | None:
+        if any(item.provider_key != provider_key for item in items):
+            raise ValueError("provider discovery item mismatch")
+        with self._lock:
+            job = self.jobs.get(job_id)
+            if (
+                job is None
+                or job.status is not JobStatus.processing
+                or job.started_at != claim_started_at
+            ):
+                return None
+            if job.profile_id is None:
+                raise ValueError(f"Import job {job_id} has no search profile")
+            if job.details.get("provider_key") != provider_key:
+                raise ValueError("provider discovery job mismatch")
+            validate_job_transition(job.status, JobStatus.completed)
+            now = _now()
+            for item in items:
+                self._provider_items[(provider_key, item.external_id)] = item
+            updated = job.model_copy(
+                update={
+                    "status": JobStatus.completed,
+                    "finished_at": now,
+                    "error_code": None,
+                    "error_message": None,
+                    "details": {
+                        **job.details,
+                        "outcome": "provider_metadata_persisted",
+                        "provider_item_count": len(items),
+                        "provider_external_ids": [
+                            item.external_id for item in items
+                        ],
+                        "last_result_count": len(items),
+                        "last_error_code": None,
+                        "result_count": len(items),
+                        "discard_count": 0,
+                        "duplicate_count": 0,
+                    },
+                }
+            )
+            self.jobs[job_id] = updated
+            profile = self.profiles.get(job.profile_id)
+            latest_job = self._latest_profile_job(job.profile_id)
+            if (
+                profile is not None
+                and latest_job is not None
+                and latest_job.id == job_id
+            ):
+                self.profiles[job.profile_id] = profile.model_copy(
+                    update={
+                        "last_run_at": now,
+                        "next_page_token": next_cursor,
+                    }
+                )
+            return deepcopy(updated)
+
+    def get_provider_item(
+        self,
+        provider_key: str,
+        external_id: str,
+    ) -> ProviderItemPayload | None:
+        with self._lock:
+            item = self._provider_items.get((provider_key, external_id))
+            return deepcopy(item) if item is not None else None
 
     def delete_profile(self, profile_id: UUID) -> bool:
         with self._lock:

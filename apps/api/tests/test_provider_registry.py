@@ -439,7 +439,15 @@ def test_registry_module_has_no_legacy_or_concrete_provider_dependency() -> None
 def test_builtin_descriptors_are_conservative_and_match_valid_urls() -> None:
     descriptors = build_provider_descriptors(_settings())
     by_key = {descriptor.key: descriptor for descriptor in descriptors}
-    assert set(by_key) == {"youtube", "soundcloud", "ftm"}
+    assert set(by_key) == {
+        "archive-org",
+        "audius",
+        "ftm",
+        "mixcloud",
+        "rss",
+        "soundcloud",
+        "youtube",
+    }
     assert by_key["youtube"].capabilities == {
         ProviderCapability.discovery,
         ProviderCapability.metadata,
@@ -454,6 +462,34 @@ def test_builtin_descriptors_are_conservative_and_match_valid_urls() -> None:
         ProviderCapability.metadata,
         ProviderCapability.license_evidence,
     }
+    assert by_key["archive-org"].capabilities == {
+        ProviderCapability.discovery,
+        ProviderCapability.metadata,
+        ProviderCapability.embed,
+        ProviderCapability.license_evidence,
+    }
+    assert by_key["mixcloud"].capabilities == {
+        ProviderCapability.discovery,
+        ProviderCapability.metadata,
+        ProviderCapability.embed,
+        ProviderCapability.syndication,
+    }
+    assert by_key["audius"].capabilities == {
+        ProviderCapability.discovery,
+        ProviderCapability.metadata,
+        ProviderCapability.embed,
+        ProviderCapability.license_evidence,
+    }
+    assert by_key["rss"].capabilities == {
+        ProviderCapability.discovery,
+        ProviderCapability.syndication,
+    }
+    for key in ("archive-org", "mixcloud", "audius", "rss"):
+        descriptor = by_key[key]
+        assert descriptor.enabled_by_default is False
+        assert descriptor.task_by_capability[ProviderCapability.discovery] == (
+            "app.workers.provider_discovery.discover_profile"
+        )
     for descriptor in descriptors:
         assert ProviderCapability.authorized_audio not in descriptor.capabilities
         assert ProviderCapability.creator_upload not in descriptor.capabilities
@@ -464,6 +500,18 @@ def test_builtin_descriptors_are_conservative_and_match_valid_urls() -> None:
     assert registry.match_url("https://youtu.be/abc-23").key == "youtube"
     assert registry.match_url("https://soundcloud.com/syco23/live-set").key == "soundcloud"
     assert registry.match_url("https://freeteknomusic.org/sets/23hz").key == "ftm"
+    assert registry.match_url("https://archive.org/details/warehouse-set-23").key == (
+        "archive-org"
+    )
+    assert registry.match_url(
+        "https://www.mixcloud.com/syco23/warehouse-set-23/"
+    ).key == "mixcloud"
+    assert registry.match_url("https://api.audius.co/v1/tracks/audius23").key == (
+        "audius"
+    )
+    assert registry.match_url("https://audius.co/dj-fixture/warehouse-set-23").key == (
+        "audius"
+    )
     with pytest.raises(ProviderUrlMatchError):
         registry.match_url("https://example.com/watch?v=abc_23")
 

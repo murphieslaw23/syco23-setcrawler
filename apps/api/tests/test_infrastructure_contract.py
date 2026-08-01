@@ -53,6 +53,12 @@ def test_compose_exposes_the_provider_worker_contract() -> None:
         'PROVIDER_REQUEST_TIMEOUT_SECONDS: "${PROVIDER_REQUEST_TIMEOUT_SECONDS:-20}"',
         'PROVIDER_OUTPUT_LIMIT_BYTES: "${PROVIDER_OUTPUT_LIMIT_BYTES:-1048576}"',
         'YT_DLP_BIN: "${YT_DLP_BIN:-yt-dlp}"',
+        'ARCHIVE_ORG_ENABLED: "${ARCHIVE_ORG_ENABLED:-false}"',
+        'MIXCLOUD_ENABLED: "${MIXCLOUD_ENABLED:-false}"',
+        'AUDIUS_ENABLED: "${AUDIUS_ENABLED:-false}"',
+        'AUDIUS_API_BEARER_TOKEN: "${AUDIUS_API_BEARER_TOKEN:-}"',
+        'RSS_ENABLED: "${RSS_ENABLED:-false}"',
+        'RSS_TRUSTED_FEEDS_JSON: "${RSS_TRUSTED_FEEDS_JSON:-}"',
     ):
         assert expected in api
 
@@ -61,6 +67,15 @@ def test_compose_exposes_the_provider_worker_contract() -> None:
     )[0]
     assert 'YOUTUBE_API_KEY: "${YOUTUBE_API_KEY:-}"' in provider_api
     assert 'PROVIDER_MODE: "${PROVIDER_MODE:-fixture}"' in provider_api
+    for expected in (
+        'ARCHIVE_ORG_ENABLED: "${ARCHIVE_ORG_ENABLED:-false}"',
+        'MIXCLOUD_ENABLED: "${MIXCLOUD_ENABLED:-false}"',
+        'AUDIUS_ENABLED: "${AUDIUS_ENABLED:-false}"',
+        'AUDIUS_API_BEARER_TOKEN: "${AUDIUS_API_BEARER_TOKEN:-}"',
+        'RSS_ENABLED: "${RSS_ENABLED:-false}"',
+        'RSS_TRUSTED_FEEDS_JSON: "${RSS_TRUSTED_FEEDS_JSON:-}"',
+    ):
+        assert expected in provider_api
     assert (
         'PROVIDER_REQUEST_TIMEOUT_SECONDS: '
         '"${PROVIDER_REQUEST_TIMEOUT_SECONDS:-20}"'
@@ -85,6 +100,19 @@ def test_compose_exposes_the_provider_worker_contract() -> None:
     ):
         assert expected in provider_scrape
 
+    process_worker = compose.split("  worker-process:\n", maxsplit=1)[1].split(
+        "  worker-beat:\n", maxsplit=1
+    )[0]
+    for expected in (
+        'ARCHIVE_ORG_ENABLED: "${ARCHIVE_ORG_ENABLED:-false}"',
+        'MIXCLOUD_ENABLED: "${MIXCLOUD_ENABLED:-false}"',
+        'AUDIUS_ENABLED: "${AUDIUS_ENABLED:-false}"',
+        'AUDIUS_API_BEARER_TOKEN: "${AUDIUS_API_BEARER_TOKEN:-}"',
+        'RSS_ENABLED: "${RSS_ENABLED:-false}"',
+        'RSS_TRUSTED_FEEDS_JSON: "${RSS_TRUSTED_FEEDS_JSON:-}"',
+    ):
+        assert expected in process_worker
+
     assert "worker-youtube:" not in compose
     assert "worker-soundcloud:" not in compose
     assert "worker-ftm:" not in compose
@@ -97,6 +125,10 @@ def test_compose_exposes_the_provider_worker_contract() -> None:
         "0003_indexes.sql:/docker-entrypoint-initdb.d/003-indexes.sql:ro",
         "20260728192205_provider_jobs.sql:/docker-entrypoint-initdb.d/20260728192205-provider-jobs.sql:ro",
         "20260729060000_final_release_fixes.sql:/docker-entrypoint-initdb.d/20260729060000-final-release-fixes.sql:ro",
+        "20260731110000_provider_source_schema.sql:/docker-entrypoint-initdb.d/20260731110000-provider-source-schema.sql:ro",
+        "20260801120000_provider_profile_scheduling.sql:/docker-entrypoint-initdb.d/20260801120000-provider-profile-scheduling.sql:ro",
+        "20260801150000_scheduler_hardening.sql:/docker-entrypoint-initdb.d/20260801150000-scheduler-hardening.sql:ro",
+        "20260801210000_provider_discovery_runtime.sql:/docker-entrypoint-initdb.d/20260801210000-provider-discovery-runtime.sql:ro",
     )
     assert all(item in compose for item in init_mounts)
     assert [compose.index(item) for item in init_mounts] == sorted(
@@ -193,6 +225,10 @@ def test_production_compose_keeps_state_and_secrets_on_the_backend_host() -> Non
             environment["SUPABASE_ANON_KEY"]
             == "${SUPABASE_ANON_KEY:?SUPABASE_ANON_KEY is required}"
         )
+        assert environment["ARCHIVE_ORG_ENABLED"] == "${ARCHIVE_ORG_ENABLED:-false}"
+        assert environment["MIXCLOUD_ENABLED"] == "${MIXCLOUD_ENABLED:-false}"
+        assert environment["AUDIUS_ENABLED"] == "${AUDIUS_ENABLED:-false}"
+        assert environment["RSS_ENABLED"] == "${RSS_ENABLED:-false}"
 
     assert "SUPABASE_SERVICE_ROLE_KEY" not in compose_path.read_text()
 

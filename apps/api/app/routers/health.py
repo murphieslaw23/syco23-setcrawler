@@ -20,7 +20,11 @@ def health(request: Request) -> dict[str, object]:
         "status": "ok",
         "service": "syco23-setcrawler-api",
         "ready": (
-            all(item["configuration_complete"] for item in providers.values())
+            all(
+                not item["database_enabled"]
+                or item["configuration_complete"]
+                for item in providers.values()
+            )
             and bool(operational["ready"])
         ),
         "providers": providers,
