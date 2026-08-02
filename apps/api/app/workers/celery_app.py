@@ -16,6 +16,20 @@ beat_schedule = {
         "options": {"queue": "process"},
     },
 }
+task_routes = {
+    "app.workers.youtube_poller.*": {"queue": "youtube"},
+    "app.workers.soundcloud_importer.*": {"queue": "soundcloud"},
+    "app.workers.ftm_scraper.*": {"queue": "ftm"},
+    "app.workers.normalize_worker.*": {"queue": "process"},
+}
+worker_imports = [
+    "app.workers.ftm_scraper",
+    "app.workers.normalize_worker",
+    "app.workers.profile_scheduler",
+    "app.workers.provider_discovery",
+    "app.workers.soundcloud_importer",
+    "app.workers.youtube_poller",
+]
 if settings.audio_lifecycle_executor_enabled:
     beat_schedule["execute-private-audio-lifecycle-jobs"] = {
         "task": (
@@ -25,6 +39,10 @@ if settings.audio_lifecycle_executor_enabled:
         "schedule": settings.audio_lifecycle_interval_seconds,
         "options": {"queue": "audio-lifecycle"},
     }
+    task_routes["app.workers.audio_lifecycle_worker.*"] = {
+        "queue": "audio-lifecycle"
+    }
+    worker_imports.append("app.workers.audio_lifecycle_worker")
 
 celery_app = Celery(
     "syco23_setcrawler",
@@ -43,23 +61,7 @@ celery_app.conf.update(
     # Compatibility window: legacy producers without an explicit queue still
     # land on aliases consumed by the workload-class workers. Registry-driven
     # dispatch always supplies provider-api or provider-scrape explicitly.
-    task_routes={
-        "app.workers.youtube_poller.*": {"queue": "youtube"},
-        "app.workers.soundcloud_importer.*": {"queue": "soundcloud"},
-        "app.workers.ftm_scraper.*": {"queue": "ftm"},
-        "app.workers.normalize_worker.*": {"queue": "process"},
-        "app.workers.audio_lifecycle_worker.*": {
-            "queue": "audio-lifecycle"
-        },
-    },
+    task_routes=task_routes,
 )
-celery_app.conf.imports = (
-    "app.workers.audio_lifecycle_worker",
-    "app.workers.ftm_scraper",
-    "app.workers.normalize_worker",
-    "app.workers.profile_scheduler",
-    "app.workers.provider_discovery",
-    "app.workers.soundcloud_importer",
-    "app.workers.youtube_poller",
-)
+celery_app.conf.imports = tuple(worker_imports)
 register_celery_observability(get_settings)
