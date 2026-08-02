@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -118,8 +118,6 @@ jobs:
         working-directory: apps/web
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'push' && github.ref_name || '' }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -127,17 +125,15 @@ jobs:
           cache-dependency-path: apps/web/package-lock.json
       - name: Generate secure happy-dom lockfile
         run: npm install --package-lock-only --ignore-scripts --save-dev happy-dom@20.11.1
-      - name: Commit generated lockfile on security branch
-        if: github.event_name == 'push' && github.ref == 'refs/heads/fix/v1-npm-audit'
-        working-directory: .
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add apps/web/package.json apps/web/package-lock.json
-          if ! git diff --cached --quiet; then
-            git commit -m "fix: update vulnerable happy-dom dev dependency"
-            git push origin HEAD:fix/v1-npm-audit
-          fi
+      - name: Upload generated dependency files
+        uses: actions/upload-artifact@v4
+        with:
+          name: secure-web-dependency-files
+          path: |
+            apps/web/package.json
+            apps/web/package-lock.json
+          if-no-files-found: error
+          retention-days: 1
       - run: npm ci
       - name: Enforce complete dependency audit
         run: npm audit --audit-level=high
