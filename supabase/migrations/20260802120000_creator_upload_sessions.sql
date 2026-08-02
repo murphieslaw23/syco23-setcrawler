@@ -81,9 +81,14 @@ create table public.creator_upload_sessions (
     )
   ),
   check (
-    status = 'initiated'
+    (
+      status = 'initiated'
+      and staging_object_key is null
+      and storage_upload_id is null
+    )
     or (
-      staging_object_key is not null
+      status in ('uploading', 'awaiting_attestation', 'completed')
+      and staging_object_key is not null
       and storage_upload_id is not null
     )
     or status in ('aborted', 'expired')
@@ -139,6 +144,9 @@ begin
   return new;
 end;
 $$;
+
+revoke all on function public.validate_creator_upload_session() from public;
+grant execute on function public.validate_creator_upload_session() to service_role;
 
 create trigger creator_upload_sessions_validate
 before insert or update on public.creator_upload_sessions
