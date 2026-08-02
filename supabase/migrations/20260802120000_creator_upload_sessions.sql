@@ -61,6 +61,10 @@ create table public.creator_upload_sessions (
   updated_at timestamptz not null default now(),
   check (expires_at > created_at),
   check (
+    status in ('aborted', 'expired')
+    or updated_at < expires_at
+  ),
+  check (
     status not in ('awaiting_attestation', 'completed')
     or received_size_bytes = expected_size_bytes
   ),
