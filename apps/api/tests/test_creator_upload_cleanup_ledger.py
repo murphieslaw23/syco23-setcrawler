@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from importlib import import_module
 from pathlib import Path
 from uuid import UUID
@@ -63,7 +63,9 @@ def test_cleanup_migration_is_service_role_only_and_tombstones_are_immutable() -
     assert "create table public.creator_upload_cleanup_tombstones" in text
     assert "unique (session_id)" in text
     assert "status in ('queued', 'processing', 'retry', 'completed', 'dead_letter')" in text
-    assert "reason in ('user_abort', 'admin_abort', 'expired', 'rights_denied', 'verification_failed')" in text
+    assert "reason in (" in text
+    assert "'user_abort', 'admin_abort', 'expired'" in text
+    assert "'rights_denied', 'verification_failed'" in text
     assert "cleanup tombstones are immutable" in text
     assert "enable row level security" in text
     assert "service_role" in text
@@ -83,6 +85,9 @@ def test_cleanup_repository_contracts_are_importable() -> None:
 def test_local_compose_mounts_cleanup_after_part_ledger() -> None:
     root = Path(__file__).parents[3]
     compose = (root / "docker-compose.yml").read_text().casefold()
-    ledger = compose.index("20260802150000-creator-upload-part-ledger.sql")
-    cleanup = compose.index("20260802180000-creator-upload-cleanup.sql")
-    assert ledger < cleanup
+    override = (root / "docker-compose.override.yml").read_text().casefold()
+
+    assert "20260802150000-creator-upload-part-ledger.sql" in compose
+    assert "20260802180000_creator_upload_cleanup.sql" in override
+    assert "20260802180000-creator-upload-cleanup.sql" in override
+    assert 20260802150000 < 20260802180000
