@@ -115,6 +115,12 @@ class CreatorUploadSession(BaseModel):
     received_size_bytes: int = Field(default=0, ge=0)
     content_type: str = Field(min_length=3, max_length=100)
     expected_sha256: str | None = None
+    staging_object_key: str | None = Field(
+        default=None,
+        pattern=r"^objects/[0-9a-f]{2}/[0-9a-f]{32}$",
+        max_length=80,
+    )
+    storage_upload_id: str | None = Field(default=None, min_length=1, max_length=2048)
     status: CreatorUploadStatus = CreatorUploadStatus.initiated
     attestation_evidence_id: UUID | None = None
     attested_by: str | None = Field(default=None, max_length=300)
@@ -134,6 +140,16 @@ class CreatorUploadSession(BaseModel):
             raise ValueError("received upload bytes exceed the declared size")
         if self.expires_at <= self.created_at:
             raise ValueError("creator upload expiry must follow creation")
+        storage_values = (self.staging_object_key, self.storage_upload_id)
+        if self.status is CreatorUploadStatus.initiated:
+            if any(value is not None for value in storage_values):
+                raise ValueError("initiated creator uploads cannot carry storage state")
+        elif self.status in {
+            CreatorUploadStatus.uploading,
+            CreatorUploadStatus.awaiting_attestation,
+            CreatorUploadStatus.completed,
+        } and any(value is None for value in storage_values):
+            raise ValueError("active creator uploads require private storage state")
         if self.status in {
             CreatorUploadStatus.awaiting_attestation,
             CreatorUploadStatus.completed,
