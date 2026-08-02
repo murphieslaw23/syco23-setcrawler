@@ -7,6 +7,7 @@ from app.schemas.audio import AudioAssetRecord, AudioAssetState, AudioBucket
 from app.schemas.audio_lifecycle import (
     AudioLifecycleAction,
     AudioLifecycleJob,
+    AudioLifecycleJobStatus,
     AudioStorageOutcome,
 )
 from app.services.audio_storage import StoredAudioObject
@@ -116,6 +117,12 @@ class AudioLifecycleExecutor:
             try:
                 self._execute(job)
             except Exception as error:
+                current_job = self._repository.get_lifecycle_job(job.id)
+                if (
+                    current_job is not None
+                    and current_job.status is AudioLifecycleJobStatus.completed
+                ):
+                    continue
                 if job.claim_token is None:
                     raise AudioLifecycleExecutionError(
                         "claimed lifecycle job has no claim token"
