@@ -223,3 +223,21 @@ def test_expiry_cannot_be_enqueued_before_the_asset_deadline() -> None:
         assert "not expired" in str(error)
     else:
         raise AssertionError("future quarantine asset accepted for expiry")
+
+
+def test_executor_claims_and_deletes_expired_quarantine_automatically() -> None:
+    executor, repository, storage = build_executor(
+        quarantine_asset(expires_at=NOW - timedelta(seconds=1))
+    )
+
+    assert executor.run_once(limit=1) == 1
+
+    asset = repository.get_audio_asset(ASSET_ID)
+    assert asset is not None
+    assert asset.state is AudioAssetState.expired
+    assert (AudioBucket.quarantine.value, KEY) not in storage.objects
+    assert len(repository.jobs) == 1
+    job = next(iter(repository.jobs.values()))
+    assert job.action is AudioLifecycleAction.expire
+    assert job.status is AudioLifecycleJobStatus.completed
+    assert repository.tombstones[-1].storage_outcome is AudioStorageOutcome.deleted
