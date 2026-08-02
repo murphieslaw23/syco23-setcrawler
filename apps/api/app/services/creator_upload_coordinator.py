@@ -132,7 +132,7 @@ class CreatorUploadCoordinator:
         except Exception as primary_error:
             compensation_errors: list[Exception] = []
             try:
-                self._creator_repository.abort_creator_upload(
+                self._abort_creator_upload(
                     session.id,
                     reason="creator upload initialization failed",
                 )
@@ -249,7 +249,7 @@ class CreatorUploadCoordinator:
         except Exception as primary_error:
             compensation_errors: list[Exception] = []
             try:
-                self._creator_repository.abort_creator_upload(
+                self._abort_creator_upload(
                     session_id,
                     reason="multipart part could not be persisted",
                 )
@@ -266,6 +266,28 @@ class CreatorUploadCoordinator:
                 ) from primary_error
             raise
         return CreatorUploadProgress.from_records(updated_session, manifest)
+
+    def _abort_creator_upload(
+        self,
+        session_id: UUID,
+        *,
+        reason: str,
+    ) -> CreatorUploadSession:
+        checked: set[int] = set()
+        for repository in (
+            self._creator_repository,
+            self._multipart_repository,
+        ):
+            identity = id(repository)
+            if identity in checked:
+                continue
+            checked.add(identity)
+            abort = getattr(repository, "abort_creator_upload", None)
+            if callable(abort):
+                return abort(session_id, reason=reason)
+        raise CreatorUploadMultipartConflict(
+            "creator upload repository cannot persist abort state"
+        )
 
     def _require_active_session(self, session_id: UUID) -> CreatorUploadSession:
         session = self._creator_repository.get_creator_upload(session_id)
