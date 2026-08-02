@@ -111,8 +111,6 @@ jobs:
           fi
 
   web:
-    permissions:
-      contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -120,26 +118,11 @@ jobs:
         working-directory: apps/web
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'push' && github.ref_name || '' }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
-      - name: Generate secure happy-dom lockfile
-        run: npm install --package-lock-only --ignore-scripts --save-dev happy-dom@20.11.1
-      - name: Commit generated dependency files
-        if: github.event_name == 'push' && github.ref == 'refs/heads/fix/v1-npm-audit'
-        working-directory: .
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add apps/web/package.json apps/web/package-lock.json
-          if ! git diff --cached --quiet; then
-            git commit -m "fix: update vulnerable happy-dom dev dependency"
-            git push origin HEAD:fix/v1-npm-audit
-          fi
       - run: npm ci
       - name: Enforce complete dependency audit
         run: npm audit --audit-level=high
