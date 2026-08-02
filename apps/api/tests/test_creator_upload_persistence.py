@@ -21,6 +21,8 @@ JOB_ID = UUID("00000000-0000-4000-8000-000000009801")
 REVIEW_ID = UUID("00000000-0000-4000-8000-000000009802")
 EVIDENCE_ID = UUID("00000000-0000-4000-8000-000000009803")
 CHECKSUM = "a" * 64
+OBJECT_KEY = "objects/aa/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+STORAGE_UPLOAD_ID = "internal-upload-23"
 
 
 def _session(**changes: object) -> CreatorUploadSession:
@@ -39,6 +41,13 @@ def _session(**changes: object) -> CreatorUploadSession:
     }
     values.update(changes)
     return CreatorUploadSession(**values)
+
+
+def _active_storage() -> dict[str, str]:
+    return {
+        "staging_object_key": OBJECT_KEY,
+        "storage_upload_id": STORAGE_UPLOAD_ID,
+    }
 
 
 def test_creator_upload_start_normalizes_and_bounds_input() -> None:
@@ -104,20 +113,26 @@ def test_creator_attestation_requires_https_and_explicit_rights() -> None:
         )
 
 
-def test_creator_upload_progress_and_attestation_are_fenced() -> None:
+def test_creator_upload_progress_storage_and_attestation_are_fenced() -> None:
     assert _session().status is CreatorUploadStatus.initiated
 
+    with pytest.raises(ValidationError, match="cannot carry storage"):
+        _session(**_active_storage())
+    with pytest.raises(ValidationError, match="private storage state"):
+        _session(status=CreatorUploadStatus.uploading)
     with pytest.raises(ValidationError, match="exceed"):
         _session(received_size_bytes=24)
     with pytest.raises(ValidationError, match="complete upload"):
         _session(
             received_size_bytes=22,
             status=CreatorUploadStatus.awaiting_attestation,
+            **_active_storage(),
         )
     with pytest.raises(ValidationError, match="require attestation"):
         _session(
             received_size_bytes=23,
             status=CreatorUploadStatus.completed,
+            **_active_storage(),
         )
     with pytest.raises(ValidationError, match="only completed"):
         _session(
@@ -135,9 +150,11 @@ def test_creator_upload_progress_and_attestation_are_fenced() -> None:
         attested_by="creator-23",
         attested_at=FIXED_NOW + timedelta(minutes=1),
         version=3,
+        **_active_storage(),
     )
     assert completed.received_size_bytes == completed.expected_size_bytes
     assert completed.attestation_evidence_id == EVIDENCE_ID
+    assert completed.staging_object_key == OBJECT_KEY
 
 
 def test_creator_upload_migration_is_private_and_job_bound() -> None:
@@ -153,6 +170,8 @@ def test_creator_upload_migration_is_private_and_job_bound() -> None:
     assert "input_job.input_kind <> 'creator_upload'" in text
     assert "creator_attestation" in text
     assert "received_size_bytes = expected_size_bytes" in text
+    assert "status = 'initiated'" in text
+    assert "staging_object_key is null" in text
     assert "attestation is immutable" in text
     assert "alter table public.creator_upload_sessions enable row level security" in text
     assert "service_role" in text
