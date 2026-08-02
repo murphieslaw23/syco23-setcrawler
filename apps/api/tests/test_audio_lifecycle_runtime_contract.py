@@ -12,6 +12,12 @@ def _queue(command: list[str]) -> str:
     return command[command.index("-Q") + 1]
 
 
+def _assert_storage_profile_closure(overlay: dict) -> None:
+    expected = ["audio-storage", "audio-lifecycle"]
+    assert overlay["services"]["minio"]["profiles"] == expected
+    assert overlay["services"]["audio-storage-init"]["profiles"] == expected
+
+
 def test_lifecycle_worker_is_isolated_and_opt_in_locally() -> None:
     base = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
     process_environment = base["services"]["worker-process"]["environment"]
@@ -22,6 +28,7 @@ def test_lifecycle_worker_is_isolated_and_opt_in_locally() -> None:
     overlay = yaml.safe_load(
         (ROOT / "docker-compose.audio-lifecycle.yml").read_text()
     )
+    _assert_storage_profile_closure(overlay)
     worker = overlay["services"]["worker-audio-lifecycle"]
     assert worker["profiles"] == ["audio-lifecycle"]
     assert _queue(worker["command"]) == "audio-lifecycle"
@@ -40,6 +47,7 @@ def test_production_lifecycle_overlay_requires_private_credentials() -> None:
     overlay = yaml.safe_load(
         (ROOT / "docker-compose.audio-lifecycle.production.yml").read_text()
     )
+    _assert_storage_profile_closure(overlay)
     worker = overlay["services"]["worker-audio-lifecycle"]
     environment = worker["environment"]
     assert worker["profiles"] == ["audio-lifecycle"]
@@ -57,9 +65,7 @@ def test_production_lifecycle_overlay_requires_private_credentials() -> None:
 
 
 def test_celery_only_schedules_enabled_lifecycle_execution() -> None:
-    text = (
-        ROOT / "apps/api/app/workers/celery_app.py"
-    ).read_text()
+    text = (ROOT / "apps/api/app/workers/celery_app.py").read_text()
     assert "if settings.audio_lifecycle_executor_enabled:" in text
     assert '"queue": "audio-lifecycle"' in text
     assert '"execute-private-audio-lifecycle-jobs"' in text
