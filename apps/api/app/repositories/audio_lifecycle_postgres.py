@@ -160,6 +160,50 @@ class PostgresAudioLifecycleRepository:
                 ).fetchone()
         return _job(row)
 
+    def enqueue_expired_assets(
+        self,
+        *,
+        limit: int,
+        actor: str,
+        reason: str,
+        now: datetime | None = None,
+    ) -> list[AudioLifecycleJob]:
+        if limit < 1:
+            return []
+        current = now or self._clock()
+        with self._pool.connection() as connection:
+            with connection.cursor() as cursor:
+                rows = cursor.execute(
+                    """
+                    with expired as (
+                      select assets.id
+                      from audio_assets as assets
+                      where assets.state = 'quarantine'
+                        and assets.bucket_name = 'audio-quarantine'
+                        and assets.expires_at is not null
+                        and assets.expires_at <= %s
+                        and not exists (
+                          select 1
+                          from audio_asset_lifecycle_jobs as active
+                          where active.audio_asset_id = assets.id
+                            and active.status in ('queued', 'claimed', 'retry')
+                        )
+                      order by assets.expires_at, assets.id
+                      for update of assets skip locked
+                      limit %s
+                    )
+                    insert into audio_asset_lifecycle_jobs (
+                      audio_asset_id, action, actor, reason,
+                      created_at, updated_at
+                    )
+                    select expired.id, 'expire', %s, %s, %s, %s
+                    from expired
+                    returning *
+                    """,
+                    (current, limit, actor, reason, current, current),
+                ).fetchall()
+        return [_job(row) for row in rows]
+
     def get_lifecycle_job(self, job_id: UUID) -> AudioLifecycleJob | None:
         with self._pool.connection() as connection:
             with connection.cursor() as cursor:
