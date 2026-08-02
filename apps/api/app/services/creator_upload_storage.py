@@ -197,16 +197,28 @@ class MinioCreatorUploadStorage:
         stat = self._client.stat_object(handle.bucket, handle.key)
         actual_size = int(stat.size)
         if actual_size != handle.expected_size_bytes:
-            self._client.remove_object(handle.bucket, handle.key)
+            self._delete_completed_object(handle)
             raise AudioStorageBoundsError(
                 "completed multipart object size does not match the declaration"
             )
-        actual_sha256 = self._hash_completed_object(handle)
+        actual_content_type = (
+            getattr(stat, "content_type", None) or ""
+        ).casefold().strip()
+        if actual_content_type != handle.content_type:
+            self._delete_completed_object(handle)
+            raise AudioStorageBoundsError(
+                "completed multipart content type does not match the declaration"
+            )
+        try:
+            actual_sha256 = self._hash_completed_object(handle)
+        except Exception:
+            self._delete_completed_object(handle)
+            raise
         if (
             handle.expected_sha256 is not None
             and actual_sha256 != handle.expected_sha256
         ):
-            self._client.remove_object(handle.bucket, handle.key)
+            self._delete_completed_object(handle)
             raise AudioChecksumMismatch("completed multipart checksum does not match")
 
         metadata = dict(getattr(stat, "metadata", {}) or {})
@@ -221,7 +233,7 @@ class MinioCreatorUploadStorage:
                 getattr(result, "version_id", None)
                 or getattr(stat, "version_id", None)
             ),
-            content_type=getattr(stat, "content_type", None) or handle.content_type,
+            content_type=actual_content_type,
             last_modified=getattr(stat, "last_modified", None),
             metadata=metadata,
         )
@@ -281,6 +293,9 @@ class MinioCreatorUploadStorage:
                 response.close()
             finally:
                 response.release_conn()
+
+    def _delete_completed_object(self, handle: MultipartUploadHandle) -> None:
+        self._client.remove_object(handle.bucket, handle.key)
 
     def _validate_expected_size(self, expected_size_bytes: int) -> None:
         if expected_size_bytes < 1 or expected_size_bytes > self._max_object_bytes:
