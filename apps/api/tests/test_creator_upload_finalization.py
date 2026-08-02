@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from io import BytesIO
@@ -10,7 +11,6 @@ from uuid import UUID
 import pytest
 
 from app.repositories.creator_upload import CreatorUploadPersistenceDenied
-from app.repositories.creator_upload_multipart import CreatorUploadMultipartConflict
 from app.schemas.audio import (
     AudioAssetRecord,
     AudioAssetState,
@@ -29,10 +29,11 @@ from app.schemas.creator_upload_multipart import (
     CreatorUploadPartRecord,
 )
 from app.services.audio_storage import AUDIO_QUARANTINE_BUCKET, StoredAudioObject
-from app.services.creator_upload_coordinator import (
-    CreatorUploadCompensationError,
-    CreatorUploadCompletion,
-    CreatorUploadCoordinator,
+from app.services.creator_upload_finalization import (
+    CreatorUploadCompletionReceipt,
+    CreatorUploadFinalizationCompensationError,
+    CreatorUploadFinalizationConflict,
+    CreatorUploadFinalizer,
 )
 from app.services.creator_upload_storage import (
     MinioCreatorUploadStorage,
@@ -137,7 +138,7 @@ def _stored() -> StoredAudioObject:
     )
 
 
-def _attestation() -> CreatorUploadAttestation:
+def _attestation(*, expected_version: int = 2) -> CreatorUploadAttestation:
     return CreatorUploadAttestation(
         reference_url="https://rights.example/attestations/final-23",
         assertions={
@@ -145,7 +146,7 @@ def _attestation() -> CreatorUploadAttestation:
             "allows_distribution": True,
             "allows_derivatives": True,
         },
-        expected_version=2,
+        expected_version=expected_version,
     )
 
 
@@ -246,15 +247,23 @@ def test_storage_completion_resumes_an_already_committed_private_object() -> Non
     assert client.removed == []
 
 
-class _CreatorRepository:
-    def __init__(self) -> None:
+class _Repository:
+    def __init__(self, *, parts: list[CreatorUploadPartRecord] | None = None) -> None:
         self.session = _session()
+        self.parts = [_part_record()] if parts is None else parts
         self.complete_calls = 0
         self.complete_error: Exception | None = None
         self.abort_calls = 0
 
     def get_creator_upload(self, session_id: UUID) -> CreatorUploadSession | None:
         return self.session if session_id == SESSION_ID else None
+
+    def get_manifest(self, session_id: UUID) -> CreatorUploadManifest | None:
+        return _manifest() if session_id == SESSION_ID else None
+
+    def list_parts(self, session_id: UUID) -> list[CreatorUploadPartRecord]:
+        assert session_id == SESSION_ID
+        return list(self.parts)
 
     def complete_creator_upload(self, session_id: UUID, **kwargs: Any) -> Any:
         assert session_id == SESSION_ID
@@ -285,22 +294,10 @@ class _CreatorRepository:
         return self.session
 
 
-class _MultipartRepository:
-    def __init__(self, *, parts: list[CreatorUploadPartRecord] | None = None) -> None:
-        self.parts = [_part_record()] if parts is None else parts
-
-    def get_manifest(self, session_id: UUID) -> CreatorUploadManifest | None:
-        return _manifest() if session_id == SESSION_ID else None
-
-    def list_parts(self, session_id: UUID) -> list[CreatorUploadPartRecord]:
-        assert session_id == SESSION_ID
-        return list(self.parts)
-
-
-class _Storage:
+class _MultipartStorage:
     def __init__(self) -> None:
         self.complete_calls = 0
-        self.delete_calls = 0
+        self.abort_calls = 0
 
     def complete(self, handle: MultipartUploadHandle, parts: list[UploadedPart]) -> StoredAudioObject:
         assert handle == _handle()
@@ -308,45 +305,55 @@ class _Storage:
         self.complete_calls += 1
         return _stored()
 
-    def delete_completed(self, handle: MultipartUploadHandle) -> None:
+    def abort(self, handle: MultipartUploadHandle) -> None:
         assert handle == _handle()
-        self.delete_calls += 1
+        self.abort_calls += 1
 
 
-def _coordinator(
+class _ObjectStorage:
+    def __init__(self) -> None:
+        self.delete_calls: list[tuple[str, str]] = []
+        self.delete_error: Exception | None = None
+
+    def delete(self, bucket: str, key: str) -> None:
+        if self.delete_error is not None:
+            raise self.delete_error
+        self.delete_calls.append((bucket, key))
+
+
+def _finalizer(
     *,
     parts: list[CreatorUploadPartRecord] | None = None,
-) -> tuple[CreatorUploadCoordinator, _CreatorRepository, _Storage]:
-    creator = _CreatorRepository()
-    storage = _Storage()
-    coordinator = CreatorUploadCoordinator(
-        creator,
-        _MultipartRepository(parts=parts),
-        storage,
+) -> tuple[CreatorUploadFinalizer, _Repository, _MultipartStorage, _ObjectStorage]:
+    repository = _Repository(parts=parts)
+    multipart = _MultipartStorage()
+    objects = _ObjectStorage()
+    return (
+        CreatorUploadFinalizer(repository, multipart, objects),
+        repository,
+        multipart,
+        objects,
     )
-    return coordinator, creator, storage
 
 
 def test_finalization_commits_storage_then_atomic_database_state() -> None:
-    coordinator, creator, storage = _coordinator()
+    finalizer, repository, multipart, objects = _finalizer()
 
-    result = coordinator.complete(
+    result = finalizer.finalize(
         SESSION_ID,
         attestation=_attestation(),
         actor="creator-23",
     )
 
-    assert isinstance(result, CreatorUploadCompletion)
+    assert isinstance(result, CreatorUploadCompletionReceipt)
     assert result.session_id == SESSION_ID
     assert result.status is CreatorUploadStatus.completed
     assert result.version == 3
-    assert result.audio_asset_id == ASSET_ID
-    assert result.size_bytes == len(PAYLOAD)
-    assert result.checksum_sha256 == PAYLOAD_SHA
-    assert result.content_type == "audio/mpeg"
-    assert storage.complete_calls == 1
-    assert creator.complete_calls == 1
-    serialized = result.model_dump()
+    assert result.attested_by == "creator-23"
+    assert multipart.complete_calls == 1
+    assert repository.complete_calls == 1
+    assert objects.delete_calls == []
+    serialized = asdict(result)
     assert "bucket" not in serialized
     assert "object_key" not in serialized
     assert "storage_upload_id" not in serialized
@@ -356,57 +363,53 @@ def test_finalization_commits_storage_then_atomic_database_state() -> None:
 
 
 def test_transient_database_failure_leaves_verified_object_for_retry() -> None:
-    coordinator, creator, storage = _coordinator()
-    creator.complete_error = RuntimeError("database unavailable")
+    finalizer, repository, multipart, objects = _finalizer()
+    repository.complete_error = RuntimeError("database unavailable")
 
     with pytest.raises(RuntimeError, match="database unavailable"):
-        coordinator.complete(
+        finalizer.finalize(
             SESSION_ID,
             attestation=_attestation(),
             actor="creator-23",
         )
 
-    assert creator.session.status is CreatorUploadStatus.awaiting_attestation
-    assert creator.abort_calls == 0
-    assert storage.delete_calls == 0
+    assert repository.session.status is CreatorUploadStatus.awaiting_attestation
+    assert repository.abort_calls == 0
+    assert objects.delete_calls == []
 
-    result = coordinator.complete(
+    result = finalizer.finalize(
         SESSION_ID,
         attestation=_attestation(),
         actor="creator-23",
     )
     assert result.status is CreatorUploadStatus.completed
-    assert storage.complete_calls == 2
-    assert creator.complete_calls == 2
+    assert multipart.complete_calls == 2
+    assert repository.complete_calls == 2
 
 
 def test_rights_denial_deletes_verified_object_and_durably_aborts() -> None:
-    coordinator, creator, storage = _coordinator()
-    creator.complete_error = CreatorUploadPersistenceDenied("rights expired")
+    finalizer, repository, _multipart, objects = _finalizer()
+    repository.complete_error = CreatorUploadPersistenceDenied("rights expired")
 
     with pytest.raises(CreatorUploadPersistenceDenied, match="rights expired"):
-        coordinator.complete(
+        finalizer.finalize(
             SESSION_ID,
             attestation=_attestation(),
             actor="creator-23",
         )
 
-    assert creator.abort_calls == 1
-    assert creator.session.status is CreatorUploadStatus.aborted
-    assert storage.delete_calls == 1
+    assert repository.abort_calls == 1
+    assert repository.session.status is CreatorUploadStatus.aborted
+    assert objects.delete_calls == [(AUDIO_QUARANTINE_BUCKET, OBJECT_KEY)]
 
 
 def test_rights_denial_preserves_cleanup_failures() -> None:
-    coordinator, creator, storage = _coordinator()
-    creator.complete_error = CreatorUploadPersistenceDenied("rights expired")
+    finalizer, repository, _multipart, objects = _finalizer()
+    repository.complete_error = CreatorUploadPersistenceDenied("rights expired")
+    objects.delete_error = RuntimeError("storage cleanup unavailable")
 
-    def fail_delete(_handle: MultipartUploadHandle) -> None:
-        raise RuntimeError("storage cleanup unavailable")
-
-    storage.delete_completed = fail_delete  # type: ignore[method-assign]
-
-    with pytest.raises(CreatorUploadCompensationError) as error:
-        coordinator.complete(
+    with pytest.raises(CreatorUploadFinalizationCompensationError) as error:
+        finalizer.finalize(
             SESSION_ID,
             attestation=_attestation(),
             actor="creator-23",
@@ -414,17 +417,34 @@ def test_rights_denial_preserves_cleanup_failures() -> None:
 
     assert isinstance(error.value.primary_error, CreatorUploadPersistenceDenied)
     assert len(error.value.compensation_errors) == 1
+    assert repository.abort_calls == 1
 
 
 def test_missing_or_conflicting_ledger_blocks_remote_completion() -> None:
-    coordinator, creator, storage = _coordinator(parts=[])
+    finalizer, repository, multipart, _objects = _finalizer(parts=[])
 
-    with pytest.raises(CreatorUploadMultipartConflict, match="every planned part"):
-        coordinator.complete(
+    with pytest.raises(CreatorUploadFinalizationConflict, match="every planned part"):
+        finalizer.finalize(
             SESSION_ID,
             attestation=_attestation(),
             actor="creator-23",
         )
 
-    assert storage.complete_calls == 0
-    assert creator.complete_calls == 0
+    assert multipart.complete_calls == 0
+    assert repository.complete_calls == 0
+
+
+def test_completed_replay_returns_receipt_without_storage_access() -> None:
+    finalizer, repository, multipart, objects = _finalizer()
+    repository.session = _session(status=CreatorUploadStatus.completed, version=3)
+
+    result = finalizer.finalize(
+        SESSION_ID,
+        attestation=_attestation(expected_version=2),
+        actor="creator-23",
+    )
+
+    assert result.status is CreatorUploadStatus.completed
+    assert result.version == 3
+    assert multipart.complete_calls == 0
+    assert objects.delete_calls == []
