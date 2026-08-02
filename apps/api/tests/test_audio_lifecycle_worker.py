@@ -38,7 +38,9 @@ def test_disabled_lifecycle_worker_is_a_strict_noop(monkeypatch) -> None:
     monkeypatch.setattr(
         worker,
         "get_lifecycle_executor",
-        lambda: (_ for _ in ()).throw(AssertionError("runtime should not initialize")),
+        lambda: (_ for _ in ()).throw(
+            AssertionError("runtime should not initialize")
+        ),
     )
 
     assert worker.execute_audio_lifecycle_jobs() == 0
@@ -52,6 +54,7 @@ def test_enabled_lifecycle_worker_uses_the_configured_batch(monkeypatch) -> None
         worker,
         "get_settings",
         lambda: SimpleNamespace(
+            environment="fixture",
             audio_lifecycle_executor_enabled=True,
             audio_lifecycle_batch_size=7,
         ),
