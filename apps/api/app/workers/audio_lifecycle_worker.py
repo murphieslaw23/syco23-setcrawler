@@ -50,6 +50,5 @@ def execute_audio_lifecycle_jobs() -> int:
     record_periodic_task_success(
         settings,
         task_name="execute_audio_lifecycle_jobs",
-        processed_audio_lifecycle_jobs=processed,
     )
     return processed
