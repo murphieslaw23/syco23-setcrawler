@@ -16,6 +16,7 @@ from app.core.config import Settings
 ROOT = Path(__file__).resolve().parents[3]
 MIN_PART_SIZE = 5 * 1024 * 1024
 MINIO_RELEASE = "RELEASE.2025-10-15T17-29-55Z"
+MINIO_COMMIT = "9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a"
 
 
 def _storage_module():
@@ -293,7 +294,12 @@ def test_minio_server_is_built_from_pinned_source_release() -> None:
     dockerfile = dockerfile_path.read_text()
 
     assert f"ARG MINIO_VERSION={MINIO_RELEASE}" in dockerfile
-    assert "go install github.com/minio/minio@${MINIO_VERSION}" in dockerfile
+    assert f"ARG MINIO_COMMIT={MINIO_COMMIT}" in dockerfile
+    assert 'git fetch --depth 1 origin "${MINIO_VERSION}"' in dockerfile
+    assert 'test "$(git rev-parse HEAD)" = "${MINIO_COMMIT}"' in dockerfile
+    assert "go run buildscripts/gen-ldflags.go" in dockerfile
+    assert 'go build -tags kqueue -trimpath --ldflags "${LDFLAGS}"' in dockerfile
+    assert "go install github.com/minio/minio" not in dockerfile
 
     for filename in ("docker-compose.yml", "docker-compose.production.yml"):
         compose_path = ROOT / filename
