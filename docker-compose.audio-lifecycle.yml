@@ -1,0 +1,58 @@
+services:
+  worker-audio-lifecycle:
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+    profiles: ["audio-lifecycle"]
+    command:
+      - celery
+      - -A
+      - app.workers.celery_app:celery_app
+      - worker
+      - -Q
+      - audio-lifecycle
+      - --concurrency=1
+      - --loglevel=INFO
+    environment:
+      ENVIRONMENT: local
+      REPOSITORY_MODE: postgres
+      AUTH_MODE: local
+      LOCAL_USER_ROLE: admin
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/syco23
+      REDIS_URL: redis://redis:6379/0
+      AUDIO_STORAGE_ENABLED: "true"
+      AUDIO_LIFECYCLE_EXECUTOR_ENABLED: "true"
+      AUDIO_LIFECYCLE_BATCH_SIZE: "${AUDIO_LIFECYCLE_BATCH_SIZE:-25}"
+      AUDIO_LIFECYCLE_MAX_ATTEMPTS: "${AUDIO_LIFECYCLE_MAX_ATTEMPTS:-5}"
+      AUDIO_LIFECYCLE_RETRY_DELAY_SECONDS: "${AUDIO_LIFECYCLE_RETRY_DELAY_SECONDS:-300}"
+      AUDIO_LIFECYCLE_CLAIM_TIMEOUT_SECONDS: "${AUDIO_LIFECYCLE_CLAIM_TIMEOUT_SECONDS:-900}"
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: "${MINIO_ACCESS_KEY:-syco23-local}"
+      MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:-syco23-local-minio-change-me}"
+      MINIO_SECURE: "false"
+      AUDIO_MAX_OBJECT_BYTES: "${AUDIO_MAX_OBJECT_BYTES:-4294967296}"
+      AUDIO_MULTIPART_PART_SIZE_BYTES: "${AUDIO_MULTIPART_PART_SIZE_BYTES:-16777216}"
+      SERVICE_COMPONENT: worker-audio-lifecycle
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      audio-storage-init:
+        condition: service_completed_successfully
+
+  worker-beat:
+    profiles: ["audio-lifecycle"]
+    environment:
+      AUDIO_STORAGE_ENABLED: "true"
+      AUDIO_LIFECYCLE_EXECUTOR_ENABLED: "true"
+      AUDIO_LIFECYCLE_INTERVAL_SECONDS: "${AUDIO_LIFECYCLE_INTERVAL_SECONDS:-60}"
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: "${MINIO_ACCESS_KEY:-syco23-local}"
+      MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:-syco23-local-minio-change-me}"
+      MINIO_SECURE: "false"
