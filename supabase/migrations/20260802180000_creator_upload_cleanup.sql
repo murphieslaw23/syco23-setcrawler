@@ -5,7 +5,7 @@ begin;
 
 create table public.creator_upload_cleanup_jobs (
   id uuid primary key default gen_random_uuid(),
-  session_id uuid not null unique
+  session_id uuid not null
     references public.creator_upload_sessions(id) on delete restrict,
   reason text not null check (
     reason in (
@@ -37,6 +37,7 @@ create table public.creator_upload_cleanup_jobs (
   completed_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
+  unique (session_id),
   check ((object_key is null) = (storage_upload_id is null)),
   check (
     (status = 'processing' and claim_started_at is not null)
