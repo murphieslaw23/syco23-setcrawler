@@ -12,7 +12,7 @@ RUN git init . \
     && git fetch --depth 1 origin "${MINIO_VERSION}" \
     && git checkout --detach FETCH_HEAD \
     && test "$(git rev-parse HEAD)" = "${MINIO_COMMIT}"
-RUN LDFLAGS="$(go run buildscripts/gen-ldflags.go)" \
+RUN LDFLAGS="$(MINIO_RELEASE=RELEASE go run buildscripts/gen-ldflags.go)" \
     && CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
        go build -tags kqueue -trimpath --ldflags "${LDFLAGS}" \
        -o /src/minio .
