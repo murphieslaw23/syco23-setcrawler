@@ -194,32 +194,31 @@ class MinioCreatorUploadStorage:
             handle.upload_id,
             [Part(part.part_number, part.etag) for part in ordered],
         )
-        stat = self._client.stat_object(handle.bucket, handle.key)
-        actual_size = int(stat.size)
-        if actual_size != handle.expected_size_bytes:
-            self._delete_completed_object(handle)
-            raise AudioStorageBoundsError(
-                "completed multipart object size does not match the declaration"
-            )
-        actual_content_type = (
-            getattr(stat, "content_type", None) or ""
-        ).casefold().strip()
-        if actual_content_type != handle.content_type:
-            self._delete_completed_object(handle)
-            raise AudioStorageBoundsError(
-                "completed multipart content type does not match the declaration"
-            )
         try:
+            stat = self._client.stat_object(handle.bucket, handle.key)
+            actual_size = int(stat.size)
+            if actual_size != handle.expected_size_bytes:
+                raise AudioStorageBoundsError(
+                    "completed multipart object size does not match the declaration"
+                )
+            actual_content_type = (
+                getattr(stat, "content_type", None) or ""
+            ).casefold().strip()
+            if actual_content_type != handle.content_type:
+                raise AudioStorageBoundsError(
+                    "completed multipart content type does not match the declaration"
+                )
             actual_sha256 = self._hash_completed_object(handle)
+            if (
+                handle.expected_sha256 is not None
+                and actual_sha256 != handle.expected_sha256
+            ):
+                raise AudioChecksumMismatch(
+                    "completed multipart checksum does not match"
+                )
         except Exception:
             self._delete_completed_object(handle)
             raise
-        if (
-            handle.expected_sha256 is not None
-            and actual_sha256 != handle.expected_sha256
-        ):
-            self._delete_completed_object(handle)
-            raise AudioChecksumMismatch("completed multipart checksum does not match")
 
         metadata = dict(getattr(stat, "metadata", {}) or {})
         metadata["sha256"] = actual_sha256
