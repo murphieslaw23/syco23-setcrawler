@@ -55,6 +55,8 @@ class _FakeMinioClient:
         self.headers: dict[str, str] | None = None
         self.parts: dict[int, bytes] = {}
         self.completed: bytes | None = None
+        self.read_payload: bytes | None = None
+        self.stat_content_type: str | None = None
         self.removed: list[tuple[str, str]] = []
         self.abort_count = 0
         self.missing_on_abort = False
@@ -124,7 +126,10 @@ class _FakeMinioClient:
             size=len(self.completed),
             etag="stat-etag",
             version_id=None,
-            content_type=(self.headers or {}).get("Content-Type"),
+            content_type=(
+                self.stat_content_type
+                or (self.headers or {}).get("Content-Type")
+            ),
             metadata=dict(self.headers or {}),
             last_modified=None,
         )
@@ -133,7 +138,8 @@ class _FakeMinioClient:
         assert bucket == self.bucket
         assert key == self.key
         assert self.completed is not None
-        self.last_response = _ObjectResponse(self.completed)
+        value = self.completed if self.read_payload is None else self.read_payload
+        self.last_response = _ObjectResponse(value)
         return self.last_response
 
     def remove_object(self, bucket: str, key: str) -> None:
@@ -161,6 +167,16 @@ def _started(
         expected_sha256=expected_sha256,
     )
     return storage, handle
+
+
+def _uploaded_parts(
+    storage: MinioCreatorUploadStorage,
+    handle: MultipartUploadHandle,
+) -> list[Any]:
+    return [
+        storage.upload_part(handle, part_number=1, data=FIRST_PART),
+        storage.upload_part(handle, part_number=2, data=FINAL_PART),
+    ]
 
 
 def test_constructor_rejects_incompatible_minio_clients() -> None:
@@ -216,8 +232,7 @@ def test_part_upload_follows_deterministic_plan() -> None:
 def test_completion_requires_every_part_and_verifies_full_object_checksum() -> None:
     client = _FakeMinioClient()
     storage, handle = _started(client)
-    first = storage.upload_part(handle, part_number=1, data=FIRST_PART)
-    final = storage.upload_part(handle, part_number=2, data=FINAL_PART)
+    first, final = _uploaded_parts(storage, handle)
 
     with pytest.raises(MultipartUploadConflict, match="every part"):
         storage.complete(handle, [first])
@@ -239,15 +254,36 @@ def test_completion_requires_every_part_and_verifies_full_object_checksum() -> N
 def test_checksum_mismatch_deletes_completed_object() -> None:
     client = _FakeMinioClient()
     storage, handle = _started(client, expected_sha256="f" * 64)
-    parts = [
-        storage.upload_part(handle, part_number=1, data=FIRST_PART),
-        storage.upload_part(handle, part_number=2, data=FINAL_PART),
-    ]
 
     with pytest.raises(AudioChecksumMismatch, match="checksum"):
-        storage.complete(handle, parts)
+        storage.complete(handle, _uploaded_parts(storage, handle))
 
     assert client.removed == [(AUDIO_QUARANTINE_BUCKET, handle.key)]
+
+
+def test_content_type_mismatch_deletes_completed_object() -> None:
+    client = _FakeMinioClient()
+    storage, handle = _started(client)
+    client.stat_content_type = "application/octet-stream"
+
+    with pytest.raises(AudioStorageBoundsError, match="content type"):
+        storage.complete(handle, _uploaded_parts(storage, handle))
+
+    assert client.removed == [(AUDIO_QUARANTINE_BUCKET, handle.key)]
+
+
+def test_verification_read_failure_deletes_completed_object() -> None:
+    client = _FakeMinioClient()
+    storage, handle = _started(client)
+    client.read_payload = PAYLOAD[:-1]
+
+    with pytest.raises(AudioStorageBoundsError, match="length is inconsistent"):
+        storage.complete(handle, _uploaded_parts(storage, handle))
+
+    assert client.removed == [(AUDIO_QUARANTINE_BUCKET, handle.key)]
+    assert client.last_response is not None
+    assert client.last_response.closed
+    assert client.last_response.released
 
 
 def test_abort_is_idempotent_when_upload_is_already_missing() -> None:
