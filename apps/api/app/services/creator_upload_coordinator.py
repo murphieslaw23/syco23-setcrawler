@@ -7,8 +7,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
+from app.repositories.creator_upload import CreatorUploadPersistenceDenied
 from app.repositories.creator_upload_multipart import CreatorUploadMultipartConflict
 from app.schemas.creator_upload import (
+    CreatorUploadAttestation,
     CreatorUploadSession,
     CreatorUploadStart,
     CreatorUploadStatus,
@@ -17,7 +19,10 @@ from app.schemas.creator_upload_multipart import (
     CreatorUploadManifest,
     CreatorUploadPartRecord,
 )
-from app.services.creator_upload_storage import MultipartUploadHandle
+from app.services.creator_upload_storage import (
+    MultipartUploadHandle,
+    UploadedPart,
+)
 
 
 _TERMINAL_UPLOAD_STATES = frozenset(
@@ -84,6 +89,20 @@ class CreatorUploadProgress(BaseModel):
         )
 
 
+class CreatorUploadCompletion(BaseModel):
+    """Client-safe completion evidence without private storage identity."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    session_id: UUID
+    status: CreatorUploadStatus
+    version: int
+    audio_asset_id: UUID
+    size_bytes: int
+    checksum_sha256: str
+    content_type: str
+
+
 class CreatorUploadCoordinator:
     """Server-only creator-upload transport and ledger orchestration.
 
@@ -108,11 +127,7 @@ class CreatorUploadCoordinator:
         payload: CreatorUploadStart,
         actor: str,
     ) -> CreatorUploadProgress:
-        """Create and initialize a private upload without exposing storage state.
-
-        This preserves the earlier service-level entrypoint while keeping all
-        storage identity inside the coordinator/repository boundary.
-        """
+        """Create and initialize a private upload without exposing storage state."""
         create = getattr(
             self._creator_repository,
             "create_creator_upload",
@@ -266,6 +281,103 @@ class CreatorUploadCoordinator:
                 ) from primary_error
             raise
         return CreatorUploadProgress.from_records(updated_session, manifest)
+
+    def complete(
+        self,
+        session_id: UUID,
+        *,
+        attestation: CreatorUploadAttestation,
+        actor: str,
+    ) -> CreatorUploadCompletion:
+        session = self._require_active_session(session_id)
+        if session.status is not CreatorUploadStatus.awaiting_attestation:
+            raise CreatorUploadMultipartConflict(
+                "creator upload is not awaiting attestation"
+            )
+        if session.version != attestation.expected_version:
+            raise CreatorUploadMultipartConflict(
+                "creator upload version conflict"
+            )
+        manifest = self._multipart_repository.get_manifest(session_id)
+        if manifest is None:
+            raise CreatorUploadMultipartConflict(
+                "creator upload manifest was not found"
+            )
+        records = sorted(
+            self._multipart_repository.list_parts(session_id),
+            key=lambda item: item.part_number,
+        )
+        expected_numbers = list(range(1, manifest.expected_part_count + 1))
+        if (
+            [record.part_number for record in records] != expected_numbers
+            or sum(record.size_bytes for record in records)
+            != session.expected_size_bytes
+        ):
+            raise CreatorUploadMultipartConflict(
+                "creator upload requires every planned part before completion"
+            )
+        handle = self._handle_from_private_state(session, manifest)
+        stored = self._storage.complete(
+            handle,
+            [
+                UploadedPart(
+                    part_number=record.part_number,
+                    etag=record.etag,
+                    size_bytes=record.size_bytes,
+                    checksum_sha256=record.checksum_sha256,
+                )
+                for record in records
+            ],
+        )
+        complete = getattr(
+            self._creator_repository,
+            "complete_creator_upload",
+            None,
+        )
+        if not callable(complete):
+            raise CreatorUploadMultipartConflict(
+                "creator upload repository cannot complete sessions"
+            )
+        try:
+            result = complete(
+                session_id,
+                attestation=attestation,
+                actor=actor,
+                stored=stored,
+            )
+        except CreatorUploadPersistenceDenied as primary_error:
+            compensation_errors: list[Exception] = []
+            try:
+                self._storage.delete_completed(handle)
+            except Exception as compensation_error:
+                compensation_errors.append(compensation_error)
+            try:
+                self._abort_creator_upload(
+                    session_id,
+                    reason="creator upload finalization rights denied",
+                )
+            except Exception as compensation_error:
+                compensation_errors.append(compensation_error)
+            if compensation_errors:
+                raise CreatorUploadCompensationError(
+                    primary_error,
+                    compensation_errors,
+                ) from primary_error
+            raise
+        if result is None:
+            raise CreatorUploadMultipartConflict(
+                "creator upload changed during finalization"
+            )
+        completed_session, _job, asset = result
+        return CreatorUploadCompletion(
+            session_id=completed_session.id,
+            status=completed_session.status,
+            version=completed_session.version,
+            audio_asset_id=asset.id,
+            size_bytes=asset.size_bytes,
+            checksum_sha256=asset.checksum_sha256,
+            content_type=asset.content_type or session.content_type,
+        )
 
     def _abort_creator_upload(
         self,
