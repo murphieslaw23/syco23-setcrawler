@@ -90,7 +90,7 @@ class CreatorUploadProgress(BaseModel):
 
 
 class CreatorUploadCompletion(BaseModel):
-    """Client-safe completion evidence without private storage identity."""
+    """Client-safe terminal result without private object-store identity."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -110,88 +110,42 @@ class CreatorUploadCoordinator:
     credential, or presigned URL. Runtime routes and workers remain disabled.
     """
 
-    def __init__(
-        self,
-        creator_repository: Any,
-        multipart_repository: Any,
-        storage: Any,
-    ) -> None:
+    def __init__(self, creator_repository: Any, multipart_repository: Any, storage: Any) -> None:
         self._creator_repository = creator_repository
         self._multipart_repository = multipart_repository
         self._storage = storage
 
-    def start_upload(
-        self,
-        review_id: UUID,
-        *,
-        payload: CreatorUploadStart,
-        actor: str,
-    ) -> CreatorUploadProgress:
-        """Create and initialize a private upload without exposing storage state."""
-        create = getattr(
-            self._creator_repository,
-            "create_creator_upload",
-            None,
-        )
+    def start_upload(self, review_id: UUID, *, payload: CreatorUploadStart, actor: str) -> CreatorUploadProgress:
+        create = getattr(self._creator_repository, "create_creator_upload", None)
         if not callable(create):
-            raise CreatorUploadMultipartConflict(
-                "creator upload repository cannot create sessions"
-            )
-        _job, session = create(
-            review_id,
-            payload=payload,
-            actor=actor,
-        )
+            raise CreatorUploadMultipartConflict("creator upload repository cannot create sessions")
+        _job, session = create(review_id, payload=payload, actor=actor)
         try:
             return self.start(session.id, expected_version=session.version)
         except Exception as primary_error:
             compensation_errors: list[Exception] = []
             try:
-                self._abort_creator_upload(
-                    session.id,
-                    reason="creator upload initialization failed",
-                )
+                self._abort_creator_upload(session.id, reason="creator upload initialization failed")
             except Exception as compensation_error:
                 compensation_errors.append(compensation_error)
-
             if isinstance(primary_error, CreatorUploadCompensationError):
-                compensation_errors = [
-                    *primary_error.compensation_errors,
-                    *compensation_errors,
-                ]
                 raise CreatorUploadCompensationError(
                     primary_error.primary_error,
-                    compensation_errors,
+                    [*primary_error.compensation_errors, *compensation_errors],
                 ) from primary_error
             if compensation_errors:
-                raise CreatorUploadCompensationError(
-                    primary_error,
-                    compensation_errors,
-                ) from primary_error
+                raise CreatorUploadCompensationError(primary_error, compensation_errors) from primary_error
             raise
 
-    def start(
-        self,
-        session_id: UUID,
-        *,
-        expected_version: int,
-    ) -> CreatorUploadProgress:
+    def start(self, session_id: UUID, *, expected_version: int) -> CreatorUploadProgress:
         session = self._require_active_session(session_id)
         existing_manifest = self._multipart_repository.get_manifest(session_id)
         if existing_manifest is not None:
             if session.status is CreatorUploadStatus.initiated:
-                raise CreatorUploadMultipartConflict(
-                    "initiated creator upload cannot already have a manifest"
-                )
-            return CreatorUploadProgress.from_records(
-                session,
-                existing_manifest,
-            )
+                raise CreatorUploadMultipartConflict("initiated creator upload cannot already have a manifest")
+            return CreatorUploadProgress.from_records(session, existing_manifest)
         if session.status is not CreatorUploadStatus.initiated:
-            raise CreatorUploadMultipartConflict(
-                "creator upload manifest is missing for active session"
-            )
-
+            raise CreatorUploadMultipartConflict("creator upload manifest is missing for active session")
         handle = self._storage.start(
             expected_size_bytes=session.expected_size_bytes,
             content_type=session.content_type,
@@ -199,18 +153,13 @@ class CreatorUploadCoordinator:
         )
         try:
             updated_session, manifest = self._multipart_repository.attach_manifest(
-                session_id,
-                expected_version=expected_version,
-                handle=handle,
+                session_id, expected_version=expected_version, handle=handle
             )
         except Exception as primary_error:
             try:
                 self._storage.abort(handle)
             except Exception as compensation_error:
-                raise CreatorUploadCompensationError(
-                    primary_error,
-                    [compensation_error],
-                ) from primary_error
+                raise CreatorUploadCompensationError(primary_error, [compensation_error]) from primary_error
             raise
         return CreatorUploadProgress.from_records(updated_session, manifest)
 
@@ -225,49 +174,27 @@ class CreatorUploadCoordinator:
         if not isinstance(data, bytes):
             raise TypeError("creator upload part data must be bytes")
         session = self._require_active_session(session_id)
-        if session.status not in {
-            CreatorUploadStatus.uploading,
-            CreatorUploadStatus.awaiting_attestation,
-        }:
-            raise CreatorUploadMultipartConflict(
-                "creator upload cannot accept parts from its current state"
-            )
+        if session.status not in {CreatorUploadStatus.uploading, CreatorUploadStatus.awaiting_attestation}:
+            raise CreatorUploadMultipartConflict("creator upload cannot accept parts from its current state")
         manifest = self._multipart_repository.get_manifest(session_id)
         if manifest is None:
-            raise CreatorUploadMultipartConflict(
-                "creator upload manifest was not found"
-            )
+            raise CreatorUploadMultipartConflict("creator upload manifest was not found")
         handle = self._handle_from_private_state(session, manifest)
-        existing = self._multipart_repository.get_part(
-            session_id,
-            part_number,
-        )
+        existing = self._multipart_repository.get_part(session_id, part_number)
         if existing is not None:
             self._validate_exact_replay(existing, data)
             return CreatorUploadProgress.from_records(session, manifest)
         if session.status is CreatorUploadStatus.awaiting_attestation:
-            raise CreatorUploadMultipartConflict(
-                "complete creator upload cannot accept a missing part"
-            )
-
-        uploaded = self._storage.upload_part(
-            handle,
-            part_number=part_number,
-            data=data,
-        )
+            raise CreatorUploadMultipartConflict("complete creator upload cannot accept a missing part")
+        uploaded = self._storage.upload_part(handle, part_number=part_number, data=data)
         try:
             updated_session, _ = self._multipart_repository.record_part(
-                session_id,
-                expected_version=expected_version,
-                part=uploaded,
+                session_id, expected_version=expected_version, part=uploaded
             )
         except Exception as primary_error:
             compensation_errors: list[Exception] = []
             try:
-                self._abort_creator_upload(
-                    session_id,
-                    reason="multipart part could not be persisted",
-                )
+                self._abort_creator_upload(session_id, reason="multipart part could not be persisted")
             except Exception as compensation_error:
                 compensation_errors.append(compensation_error)
             try:
@@ -275,10 +202,7 @@ class CreatorUploadCoordinator:
             except Exception as compensation_error:
                 compensation_errors.append(compensation_error)
             if compensation_errors:
-                raise CreatorUploadCompensationError(
-                    primary_error,
-                    compensation_errors,
-                ) from primary_error
+                raise CreatorUploadCompensationError(primary_error, compensation_errors) from primary_error
             raise
         return CreatorUploadProgress.from_records(updated_session, manifest)
 
@@ -289,86 +213,42 @@ class CreatorUploadCoordinator:
         attestation: CreatorUploadAttestation,
         actor: str,
     ) -> CreatorUploadCompletion:
-        session = self._require_active_session(session_id)
+        session = self._creator_repository.get_creator_upload(session_id)
+        if session is None:
+            raise CreatorUploadMultipartConflict("creator upload session was not found")
         if session.status is not CreatorUploadStatus.awaiting_attestation:
-            raise CreatorUploadMultipartConflict(
-                "creator upload is not awaiting attestation"
-            )
+            raise CreatorUploadMultipartConflict("creator upload is not awaiting attestation")
         if session.version != attestation.expected_version:
-            raise CreatorUploadMultipartConflict(
-                "creator upload version conflict"
-            )
+            raise CreatorUploadMultipartConflict("creator upload version changed before completion")
         manifest = self._multipart_repository.get_manifest(session_id)
         if manifest is None:
-            raise CreatorUploadMultipartConflict(
-                "creator upload manifest was not found"
-            )
-        records = sorted(
-            self._multipart_repository.list_parts(session_id),
-            key=lambda item: item.part_number,
-        )
-        expected_numbers = list(range(1, manifest.expected_part_count + 1))
-        if (
-            [record.part_number for record in records] != expected_numbers
-            or sum(record.size_bytes for record in records)
-            != session.expected_size_bytes
-        ):
-            raise CreatorUploadMultipartConflict(
-                "creator upload requires every planned part before completion"
-            )
+            raise CreatorUploadMultipartConflict("creator upload manifest was not found")
+        parts = self._multipart_repository.list_parts(session_id)
+        uploaded_parts = self._validate_completion_ledger(session, manifest, parts)
         handle = self._handle_from_private_state(session, manifest)
-        stored = self._storage.complete(
-            handle,
-            [
-                UploadedPart(
-                    part_number=record.part_number,
-                    etag=record.etag,
-                    size_bytes=record.size_bytes,
-                    checksum_sha256=record.checksum_sha256,
-                )
-                for record in records
-            ],
-        )
-        complete = getattr(
-            self._creator_repository,
-            "complete_creator_upload",
-            None,
-        )
-        if not callable(complete):
-            raise CreatorUploadMultipartConflict(
-                "creator upload repository cannot complete sessions"
-            )
+        stored = self._storage.complete(handle, uploaded_parts)
         try:
-            result = complete(
-                session_id,
-                attestation=attestation,
-                actor=actor,
-                stored=stored,
+            result = self._creator_repository.complete_creator_upload(
+                session_id, attestation=attestation, actor=actor, stored=stored
             )
         except CreatorUploadPersistenceDenied as primary_error:
             compensation_errors: list[Exception] = []
             try:
-                self._storage.delete_completed(handle)
+                self._abort_creator_upload(session_id, reason="creator upload finalization denied")
             except Exception as compensation_error:
                 compensation_errors.append(compensation_error)
             try:
-                self._abort_creator_upload(
-                    session_id,
-                    reason="creator upload finalization rights denied",
-                )
+                self._storage.delete_completed(handle)
             except Exception as compensation_error:
                 compensation_errors.append(compensation_error)
             if compensation_errors:
-                raise CreatorUploadCompensationError(
-                    primary_error,
-                    compensation_errors,
-                ) from primary_error
+                raise CreatorUploadCompensationError(primary_error, compensation_errors) from primary_error
             raise
         if result is None:
-            raise CreatorUploadMultipartConflict(
-                "creator upload changed during finalization"
-            )
-        completed_session, _job, asset = result
+            raise CreatorUploadMultipartConflict("creator upload changed during finalization")
+        completed_session, completed_job, asset = result
+        if completed_session.status is not CreatorUploadStatus.completed or completed_job.audio_asset_id != asset.id:
+            raise CreatorUploadMultipartConflict("creator upload completion returned inconsistent state")
         return CreatorUploadCompletion(
             session_id=completed_session.id,
             status=completed_session.status,
@@ -376,52 +256,32 @@ class CreatorUploadCoordinator:
             audio_asset_id=asset.id,
             size_bytes=asset.size_bytes,
             checksum_sha256=asset.checksum_sha256,
-            content_type=asset.content_type or session.content_type,
+            content_type=asset.content_type or stored.content_type or "",
         )
 
-    def _abort_creator_upload(
-        self,
-        session_id: UUID,
-        *,
-        reason: str,
-    ) -> CreatorUploadSession:
+    def _abort_creator_upload(self, session_id: UUID, *, reason: str) -> CreatorUploadSession:
         checked: set[int] = set()
-        for repository in (
-            self._creator_repository,
-            self._multipart_repository,
-        ):
-            identity = id(repository)
-            if identity in checked:
+        for repository in (self._creator_repository, self._multipart_repository):
+            if id(repository) in checked:
                 continue
-            checked.add(identity)
+            checked.add(id(repository))
             abort = getattr(repository, "abort_creator_upload", None)
             if callable(abort):
                 return abort(session_id, reason=reason)
-        raise CreatorUploadMultipartConflict(
-            "creator upload repository cannot persist abort state"
-        )
+        raise CreatorUploadMultipartConflict("creator upload repository cannot persist abort state")
 
     def _require_active_session(self, session_id: UUID) -> CreatorUploadSession:
         session = self._creator_repository.get_creator_upload(session_id)
         if session is None:
-            raise CreatorUploadMultipartConflict(
-                "creator upload session was not found"
-            )
+            raise CreatorUploadMultipartConflict("creator upload session was not found")
         if session.status in _TERMINAL_UPLOAD_STATES:
-            raise CreatorUploadMultipartConflict(
-                "creator upload session is terminal"
-            )
+            raise CreatorUploadMultipartConflict("creator upload session is terminal")
         return session
 
     @staticmethod
-    def _handle_from_private_state(
-        session: CreatorUploadSession,
-        manifest: CreatorUploadManifest,
-    ) -> MultipartUploadHandle:
+    def _handle_from_private_state(session: CreatorUploadSession, manifest: CreatorUploadManifest) -> MultipartUploadHandle:
         if session.staging_object_key is None or session.storage_upload_id is None:
-            raise CreatorUploadMultipartConflict(
-                "creator upload private storage state is incomplete"
-            )
+            raise CreatorUploadMultipartConflict("creator upload private storage state is incomplete")
         return MultipartUploadHandle(
             bucket="audio-quarantine",
             key=session.staging_object_key,
@@ -433,14 +293,30 @@ class CreatorUploadCoordinator:
         )
 
     @staticmethod
-    def _validate_exact_replay(
-        existing: CreatorUploadPartRecord,
-        data: bytes,
-    ) -> None:
-        if (
-            existing.size_bytes != len(data)
-            or existing.checksum_sha256 != sha256(data).hexdigest()
-        ):
-            raise CreatorUploadMultipartConflict(
-                "multipart part replay conflicts with stored state"
+    def _validate_exact_replay(existing: CreatorUploadPartRecord, data: bytes) -> None:
+        if existing.size_bytes != len(data) or existing.checksum_sha256 != sha256(data).hexdigest():
+            raise CreatorUploadMultipartConflict("multipart part replay conflicts with stored state")
+
+    @staticmethod
+    def _validate_completion_ledger(
+        session: CreatorUploadSession,
+        manifest: CreatorUploadManifest,
+        parts: list[CreatorUploadPartRecord],
+    ) -> list[UploadedPart]:
+        if manifest.session_id != session.id:
+            raise CreatorUploadMultipartConflict("multipart manifest conflicts with its upload session")
+        ordered = sorted(parts, key=lambda part: part.part_number)
+        expected_numbers = list(range(1, manifest.expected_part_count + 1))
+        if [part.part_number for part in ordered] != expected_numbers:
+            raise CreatorUploadMultipartConflict("multipart completion requires every planned part")
+        if sum(part.size_bytes for part in ordered) != session.expected_size_bytes:
+            raise CreatorUploadMultipartConflict("multipart ledger size does not match the upload declaration")
+        return [
+            UploadedPart(
+                part_number=part.part_number,
+                etag=part.etag,
+                size_bytes=part.size_bytes,
+                checksum_sha256=part.checksum_sha256,
             )
+            for part in ordered
+        ]
