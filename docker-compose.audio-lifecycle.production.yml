@@ -1,4 +1,10 @@
 services:
+  minio:
+    profiles: ["audio-storage", "audio-lifecycle"]
+
+  audio-storage-init:
+    profiles: ["audio-storage", "audio-lifecycle"]
+
   worker-audio-lifecycle:
     build:
       context: .
