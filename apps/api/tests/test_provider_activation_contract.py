@@ -38,11 +38,13 @@ def test_deploy_script_has_an_explicit_all_provider_activation_gate() -> None:
     ):
         assert variable in script
     assert "all configured providers are effectively enabled" in script
+    assert "provider_activation_ack" in script
 
 
 def test_production_example_documents_live_provider_activation() -> None:
     example = (ROOT / ".env.production.example").read_text()
 
+    assert "PROVIDER_MODE=fixture" in example
     assert "PROVIDER_MODE=live" in example
     for setting in (
         "ARCHIVE_ORG_ENABLED=true",
@@ -52,4 +54,5 @@ def test_production_example_documents_live_provider_activation() -> None:
         "FTM_SCRAPER_ENABLED=true",
     ):
         assert setting in example
-    assert "PROVIDER_ACTIVATION_ACK=activate-all" in example
+    assert "PROVIDER_ACTIVATION_ACK=activate-all ./scripts/deploy-production.sh" in example
+    assert "PROVIDER_ACTIVATION_ACK=activate-all\n" not in example
