@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Any
+from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -22,10 +24,31 @@ ALLOWED_CREATOR_AUDIO_TYPES = frozenset(
         "audio/x-wav",
     }
 )
+_REQUIRED_ATTESTATION_ASSERTIONS = (
+    "rights_holder",
+    "allows_distribution",
+    "allows_derivatives",
+)
 
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _normalize_content_type(value: str) -> str:
+    normalized = value.casefold().strip()
+    if normalized not in ALLOWED_CREATOR_AUDIO_TYPES:
+        raise ValueError("creator upload content type is not allowed")
+    return normalized
+
+
+def _validate_sha256(value: str | None) -> str | None:
+    if value is not None and (
+        len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ValueError("expected_sha256 must be lowercase hexadecimal")
+    return value
 
 
 class CreatorUploadStatus(StrEnum):
@@ -44,23 +67,42 @@ class CreatorUploadStart(BaseModel):
     content_type: str = Field(min_length=3, max_length=100)
     expected_sha256: str | None = None
 
-    @field_validator("content_type")
-    @classmethod
-    def validate_content_type(cls, value: str) -> str:
-        normalized = value.casefold().strip()
-        if normalized not in ALLOWED_CREATOR_AUDIO_TYPES:
-            raise ValueError("creator upload content type is not allowed")
-        return normalized
+    _content_type = field_validator("content_type")(_normalize_content_type)
+    _checksum = field_validator("expected_sha256")(_validate_sha256)
 
-    @field_validator("expected_sha256")
+
+class CreatorUploadAttestation(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    reference_url: str = Field(min_length=8, max_length=4096)
+    assertions: dict[str, Any]
+    expected_version: int = Field(ge=0)
+
+    @field_validator("reference_url")
     @classmethod
-    def validate_checksum(cls, value: str | None) -> str | None:
-        if value is not None and (
-            len(value) != 64
-            or any(character not in "0123456789abcdef" for character in value)
+    def validate_reference_url(cls, value: str) -> str:
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme.casefold() != "https"
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.port not in {None, 443}
+            or parsed.fragment
         ):
-            raise ValueError("expected_sha256 must be lowercase hexadecimal")
+            raise ValueError("creator attestation reference must be HTTPS")
         return value
+
+    @model_validator(mode="after")
+    def validate_assertions(self) -> "CreatorUploadAttestation":
+        if any(
+            self.assertions.get(assertion) is not True
+            for assertion in _REQUIRED_ATTESTATION_ASSERTIONS
+        ):
+            raise ValueError(
+                "creator attestation must affirm ownership, distribution, and derivatives"
+            )
+        return self
 
 
 class CreatorUploadSession(BaseModel):
@@ -83,19 +125,28 @@ class CreatorUploadSession(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
+    _content_type = field_validator("content_type")(_normalize_content_type)
+    _checksum = field_validator("expected_sha256")(_validate_sha256)
+
     @model_validator(mode="after")
     def validate_progress(self) -> "CreatorUploadSession":
         if self.received_size_bytes > self.expected_size_bytes:
             raise ValueError("received upload bytes exceed the declared size")
+        if self.expires_at <= self.created_at:
+            raise ValueError("creator upload expiry must follow creation")
         if self.status in {
             CreatorUploadStatus.awaiting_attestation,
             CreatorUploadStatus.completed,
         } and self.received_size_bytes != self.expected_size_bytes:
             raise ValueError("attestation requires a complete upload")
-        if self.status is CreatorUploadStatus.completed and (
-            self.attestation_evidence_id is None
-            or self.attested_by is None
-            or self.attested_at is None
-        ):
-            raise ValueError("completed creator uploads require attestation")
+        attestation_values = (
+            self.attestation_evidence_id,
+            self.attested_by,
+            self.attested_at,
+        )
+        if self.status is CreatorUploadStatus.completed:
+            if any(value is None for value in attestation_values):
+                raise ValueError("completed creator uploads require attestation")
+        elif any(value is not None for value in attestation_values):
+            raise ValueError("only completed creator uploads may carry attestation")
         return self
