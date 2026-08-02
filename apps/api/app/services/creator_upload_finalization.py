@@ -80,9 +80,9 @@ class CreatorUploadFinalizer:
     Storage and PostgreSQL cannot share one distributed transaction. A verified
     private object is retained after a transient persistence failure so the next
     call can resume through the storage adapter's ``NoSuchUpload`` verification
-    path. Rights denial is terminal and triggers object deletion plus a durable
-    session/job abort. Unknown database commit state never deletes bytes that
-    may already be referenced.
+    path. Rights denial is terminal and triggers a durable session/job abort
+    before object deletion. Unknown database commit state never deletes bytes
+    that may already be referenced.
     """
 
     def __init__(
@@ -220,14 +220,14 @@ class CreatorUploadFinalizer:
     ) -> None:
         compensation_errors: list[Exception] = []
         try:
-            self._delete_stored_object(stored)
-        except Exception as cleanup_error:
-            compensation_errors.append(cleanup_error)
-        try:
             self._repository.abort_creator_upload(
                 session_id,
                 reason="creator upload rights review denied or expired",
             )
+        except Exception as cleanup_error:
+            compensation_errors.append(cleanup_error)
+        try:
+            self._delete_stored_object(stored)
         except Exception as cleanup_error:
             compensation_errors.append(cleanup_error)
         if compensation_errors:
