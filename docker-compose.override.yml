@@ -1,0 +1,4 @@
+services:
+  db:
+    volumes:
+      - ./supabase/migrations/20260802180000_creator_upload_cleanup.sql:/docker-entrypoint-initdb.d/20260802180000-creator-upload-cleanup.sql:ro
