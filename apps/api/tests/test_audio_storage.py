@@ -15,6 +15,7 @@ from app.core.config import Settings
 
 ROOT = Path(__file__).resolve().parents[3]
 MIN_PART_SIZE = 5 * 1024 * 1024
+MINIO_RELEASE = "RELEASE.2025-10-15T17-29-55Z"
 
 
 def _storage_module():
@@ -284,6 +285,27 @@ def test_compose_keeps_minio_internal_and_initializes_fixed_buckets() -> None:
 
     caddy = (ROOT / "docker" / "Caddyfile").read_text()
     assert "minio" not in caddy.lower()
+
+
+def test_minio_server_is_built_from_pinned_source_release() -> None:
+    dockerfile_path = ROOT / "docker" / "minio.Dockerfile"
+    assert dockerfile_path.exists()
+    dockerfile = dockerfile_path.read_text()
+
+    assert f"ARG MINIO_VERSION={MINIO_RELEASE}" in dockerfile
+    assert "go install github.com/minio/minio@${MINIO_VERSION}" in dockerfile
+
+    for filename in ("docker-compose.yml", "docker-compose.production.yml"):
+        compose_path = ROOT / filename
+        compose_text = compose_path.read_text()
+        compose = yaml.safe_load(compose_text)
+        minio = compose["services"]["minio"]
+
+        assert "quay.io/minio/minio" not in compose_text
+        assert minio["build"]["dockerfile"] == "docker/minio.Dockerfile"
+        assert minio["build"]["args"]["MINIO_VERSION"] == MINIO_RELEASE
+        healthcheck = " ".join(minio["healthcheck"]["test"])
+        assert "/minio/health/live" in healthcheck
 
 
 def test_operations_document_records_private_topology_and_single_copy_risk() -> None:
