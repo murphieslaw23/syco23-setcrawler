@@ -85,14 +85,17 @@ def _candidate(
     source_url: str = "https://media.example/audio/set23.mp3",
     expected_sha256: str | None = None,
 ) -> AuthorizedAudioCandidate:
-    return AuthorizedAudioCandidate(
-        provider_key=provider_key,
-        external_id="set-23",
-        source_url=source_url,
-        evidence_references=("https://rights.example/evidence/23",),
-        expected_sha256=expected_sha256,
-        evidence={"official_download": True},
-    )
+    values = {
+        "provider_key": provider_key,
+        "external_id": "set-23",
+        "source_url": source_url,
+        "evidence_references": ("https://rights.example/evidence/23",),
+        "expected_sha256": expected_sha256,
+        "evidence": {"official_download": True},
+    }
+    if source_url.startswith("http://"):
+        return AuthorizedAudioCandidate.model_construct(**values)
+    return AuthorizedAudioCandidate(**values)
 
 
 def _public_resolver(hostname: str) -> tuple[str, ...]:
