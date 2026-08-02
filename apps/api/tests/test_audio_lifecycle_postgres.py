@@ -7,8 +7,8 @@ from uuid import UUID
 
 import pytest
 
-from app.repositories.audio_lifecycle import (
-    AudioLifecycleConflict,
+from app.repositories.audio_lifecycle import AudioLifecycleConflict
+from app.repositories.audio_lifecycle_postgres import (
     PostgresAudioLifecycleRepository,
 )
 from app.schemas.audio_lifecycle import AudioLifecycleAction, AudioStorageOutcome
@@ -126,7 +126,15 @@ def test_postgres_lifecycle_completion_is_claim_fenced_and_atomic() -> None:
                       'quarantine', %s, %s, %s
                     )
                     """,
-                    (ASSET_ID, review.id, KEY, CHECKSUM, NOW + timedelta(days=30), NOW, NOW),
+                    (
+                        ASSET_ID,
+                        review.id,
+                        KEY,
+                        CHECKSUM,
+                        NOW + timedelta(days=30),
+                        NOW,
+                        NOW,
+                    ),
                 )
 
         queued = repository.enqueue_lifecycle(
@@ -155,10 +163,17 @@ def test_postgres_lifecycle_completion_is_claim_fenced_and_atomic() -> None:
                     (ASSET_ID,),
                 ).fetchone()
                 tombstone_count = cursor.execute(
-                    "select count(*) as count from audio_asset_lifecycle_tombstones where lifecycle_job_id = %s",
+                    """
+                    select count(*) as count
+                    from audio_asset_lifecycle_tombstones
+                    where lifecycle_job_id = %s
+                    """,
                     (queued.id,),
                 ).fetchone()["count"]
-        assert unchanged == {"state": "quarantine", "bucket_name": "audio-quarantine"}
+        assert unchanged == {
+            "state": "quarantine",
+            "bucket_name": "audio-quarantine",
+        }
         assert tombstone_count == 0
 
         completed, tombstone, asset = repository.complete_lifecycle(
@@ -180,7 +195,8 @@ def test_postgres_lifecycle_completion_is_claim_fenced_and_atomic() -> None:
                            t.storage_outcome, t.checksum_sha256, t.size_bytes
                     from audio_asset_lifecycle_jobs j
                     join audio_assets a on a.id = j.audio_asset_id
-                    join audio_asset_lifecycle_tombstones t on t.lifecycle_job_id = j.id
+                    join audio_asset_lifecycle_tombstones t
+                      on t.lifecycle_job_id = j.id
                     where j.id = %s
                     """,
                     (queued.id,),
@@ -198,20 +214,44 @@ def test_postgres_lifecycle_completion_is_claim_fenced_and_atomic() -> None:
                 cursor.execute("set local session_replication_role = replica")
                 if job_id is not None:
                     cursor.execute(
-                        "delete from audio_asset_lifecycle_tombstones where lifecycle_job_id = %s",
+                        """
+                        delete from audio_asset_lifecycle_tombstones
+                        where lifecycle_job_id = %s
+                        """,
                         (job_id,),
                     )
                     cursor.execute(
                         "delete from audio_asset_lifecycle_jobs where id = %s",
                         (job_id,),
                     )
-                cursor.execute("delete from audio_assets where id = %s", (ASSET_ID,))
+                cursor.execute(
+                    "delete from audio_assets where id = %s",
+                    (ASSET_ID,),
+                )
                 if review_id is not None:
-                    cursor.execute("delete from audio_permissions where rights_review_id = %s", (review_id,))
-                    cursor.execute("delete from rights_review_events where rights_review_id = %s", (review_id,))
-                    cursor.execute("delete from rights_evidence where rights_review_id = %s", (review_id,))
-                    cursor.execute("delete from rights_reviews where id = %s", (review_id,))
-                cursor.execute("delete from set_provider_items where set_id = %s", (SET_ID,))
-                cursor.execute("delete from provider_items where id = %s", (PROVIDER_ITEM_ID,))
+                    cursor.execute(
+                        "delete from audio_permissions where rights_review_id = %s",
+                        (review_id,),
+                    )
+                    cursor.execute(
+                        "delete from rights_review_events where rights_review_id = %s",
+                        (review_id,),
+                    )
+                    cursor.execute(
+                        "delete from rights_evidence where rights_review_id = %s",
+                        (review_id,),
+                    )
+                    cursor.execute(
+                        "delete from rights_reviews where id = %s",
+                        (review_id,),
+                    )
+                cursor.execute(
+                    "delete from set_provider_items where set_id = %s",
+                    (SET_ID,),
+                )
+                cursor.execute(
+                    "delete from provider_items where id = %s",
+                    (PROVIDER_ITEM_ID,),
+                )
                 cursor.execute("delete from sets where id = %s", (SET_ID,))
         pool.close()
