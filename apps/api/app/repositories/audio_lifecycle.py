@@ -100,13 +100,16 @@ class InMemoryAudioLifecycleRepository:
     def get_audio_asset(self, asset_id: UUID) -> AudioAssetRecord | None:
         return self._audio_repository.get_audio_asset(asset_id)
 
-    def _store_asset(self, asset: AudioAssetRecord) -> None:
+    def _assets(self) -> dict[UUID, AudioAssetRecord]:
         assets = getattr(self._audio_repository, "assets", None)
         if not isinstance(assets, dict):
             raise AudioLifecycleError(
                 "in-memory audio repository does not expose mutable assets"
             )
-        assets[asset.id] = asset
+        return assets
+
+    def _store_asset(self, asset: AudioAssetRecord) -> None:
+        self._assets()[asset.id] = asset
 
     def enqueue_lifecycle(
         self,
@@ -123,7 +126,10 @@ class InMemoryAudioLifecycleRepository:
             now = self._clock()
             _validate_enqueue(asset, action=action, now=now)
             for job in self.jobs.values():
-                if job.audio_asset_id != audio_asset_id or job.status not in _ACTIVE_STATUSES:
+                if (
+                    job.audio_asset_id != audio_asset_id
+                    or job.status not in _ACTIVE_STATUSES
+                ):
                     continue
                 if job.action is not action:
                     raise AudioLifecycleConflict(
@@ -140,6 +146,49 @@ class InMemoryAudioLifecycleRepository:
             )
             self.jobs[job.id] = job
             return job
+
+    def enqueue_expired_assets(
+        self,
+        *,
+        limit: int,
+        actor: str,
+        reason: str,
+        now: datetime | None = None,
+    ) -> list[AudioLifecycleJob]:
+        if limit < 1:
+            return []
+        current = now or self._clock()
+        with self._lock:
+            active_asset_ids = {
+                job.audio_asset_id
+                for job in self.jobs.values()
+                if job.status in _ACTIVE_STATUSES
+            }
+            candidates = sorted(
+                (
+                    asset
+                    for asset in self._assets().values()
+                    if asset.state is AudioAssetState.quarantine
+                    and asset.bucket_name is AudioBucket.quarantine
+                    and asset.expires_at is not None
+                    and asset.expires_at <= current
+                    and asset.id not in active_asset_ids
+                ),
+                key=lambda item: (item.expires_at, item.id),
+            )
+            queued: list[AudioLifecycleJob] = []
+            for asset in candidates[:limit]:
+                job = AudioLifecycleJob(
+                    audio_asset_id=asset.id,
+                    action=AudioLifecycleAction.expire,
+                    actor=actor,
+                    reason=reason,
+                    created_at=current,
+                    updated_at=current,
+                )
+                self.jobs[job.id] = job
+                queued.append(job)
+            return queued
 
     def get_lifecycle_job(self, job_id: UUID) -> AudioLifecycleJob | None:
         return self.jobs.get(job_id)
