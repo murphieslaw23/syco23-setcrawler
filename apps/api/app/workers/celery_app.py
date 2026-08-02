@@ -28,6 +28,14 @@ celery_app.conf.update(
             "schedule": 60,
             "options": {"queue": "process"},
         },
+        "execute-private-audio-lifecycle-jobs": {
+            "task": (
+                "app.workers.audio_lifecycle_worker."
+                "execute_audio_lifecycle_jobs"
+            ),
+            "schedule": settings.audio_lifecycle_interval_seconds,
+            "options": {"queue": "process"},
+        },
     },
     # Compatibility window: legacy producers without an explicit queue still
     # land on aliases consumed by the workload-class workers. Registry-driven
@@ -37,9 +45,11 @@ celery_app.conf.update(
         "app.workers.soundcloud_importer.*": {"queue": "soundcloud"},
         "app.workers.ftm_scraper.*": {"queue": "ftm"},
         "app.workers.normalize_worker.*": {"queue": "process"},
+        "app.workers.audio_lifecycle_worker.*": {"queue": "process"},
     },
 )
 celery_app.conf.imports = (
+    "app.workers.audio_lifecycle_worker",
     "app.workers.ftm_scraper",
     "app.workers.normalize_worker",
     "app.workers.profile_scheduler",
