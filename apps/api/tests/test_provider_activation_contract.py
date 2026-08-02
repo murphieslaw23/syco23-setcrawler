@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 import yaml
 
@@ -21,8 +22,10 @@ def test_production_provider_mode_is_explicit() -> None:
 
 
 def test_deploy_script_has_an_explicit_all_provider_activation_gate() -> None:
-    script = (ROOT / "scripts" / "deploy-production.sh").read_text()
+    script_path = ROOT / "scripts" / "deploy-production.sh"
+    script = script_path.read_text()
 
+    subprocess.run(["bash", "-n", str(script_path)], check=True)
     assert "PROVIDER_ACTIVATION_ACK" in script
     assert "activate-all" in script
     assert 'PROVIDER_MODE must be "fixture" or "live"' in script
