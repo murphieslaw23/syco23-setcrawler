@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator
+from dataclasses import dataclass
 from ipaddress import IPv4Address, IPv6Address, ip_address, ip_network
 import socket
+from time import monotonic
 from typing import Any, BinaryIO, Protocol
 from urllib.parse import urljoin, urlsplit
 
@@ -14,6 +16,7 @@ from app.services.provider_contracts import (
     AuthorizedAudioCandidate,
     ProviderCapability,
 )
+from app.services.provider_registry import ProviderRegistryError
 from app.services.rights_policy import rights_evidence_complete
 
 
@@ -102,6 +105,13 @@ class AudioStorageWriter(Protocol):
 
 
 Resolver = Callable[[str], tuple[str, ...]]
+Clock = Callable[[], float]
+
+
+@dataclass(frozen=True, slots=True)
+class _ValidatedTarget:
+    hostname: str
+    addresses: tuple[str, ...]
 
 
 def _default_resolver(hostname: str) -> tuple[str, ...]:
@@ -135,7 +145,7 @@ def _address_is_blocked(address: IPv4Address | IPv6Address) -> bool:
     return any(address in network for network in networks)
 
 
-def _validate_target(url: str, resolver: Resolver) -> str:
+def _resolve_target(url: str, resolver: Resolver) -> _ValidatedTarget:
     parsed = urlsplit(url)
     try:
         port = parsed.port
@@ -159,15 +169,17 @@ def _validate_target(url: str, resolver: Resolver) -> str:
     try:
         literal = ip_address(hostname)
     except ValueError:
-        addresses = resolver(hostname)
+        resolved = resolver(hostname)
     else:
-        addresses = (str(literal),)
+        resolved = (str(literal),)
 
-    if not addresses:
+    if not resolved:
         raise AudioAcquisitionTargetBlocked(
             "audio acquisition target has no addresses"
         )
-    for value in addresses:
+
+    validated: list[str] = []
+    for value in dict.fromkeys(resolved):
         try:
             address = ip_address(value)
         except ValueError as error:
@@ -178,25 +190,98 @@ def _validate_target(url: str, resolver: Resolver) -> str:
             raise AudioAcquisitionTargetBlocked(
                 "audio acquisition target resolves to a blocked address"
             )
+        validated.append(str(address))
+
+    return _ValidatedTarget(
+        hostname=hostname,
+        addresses=tuple(validated),
+    )
+
+
+def _validate_target(url: str, resolver: Resolver) -> str:
+    _resolve_target(url, resolver)
     return url
+
+
+class PinnedHTTPSNetworkTransport(httpx.BaseTransport):
+    """Resolve, validate, and pin HTTPS connections while retaining Host/SNI."""
+
+    def __init__(
+        self,
+        *,
+        resolver: Resolver = _default_resolver,
+        inner: httpx.BaseTransport | None = None,
+    ) -> None:
+        self._resolver = resolver
+        self._inner = inner or httpx.HTTPTransport(retries=0)
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        if request.method != "GET":
+            raise AudioAcquisitionTargetBlocked(
+                "audio acquisition transport only permits GET"
+            )
+
+        target = _resolve_target(str(request.url), self._resolver)
+        last_error: httpx.TransportError | None = None
+        for address in target.addresses:
+            headers = request.headers.copy()
+            headers["host"] = target.hostname
+            extensions = dict(request.extensions)
+            extensions["sni_hostname"] = target.hostname
+            pinned_request = httpx.Request(
+                request.method,
+                request.url.copy_with(host=address),
+                headers=headers,
+                stream=request.stream,
+                extensions=extensions,
+            )
+            try:
+                return self._inner.handle_request(pinned_request)
+            except httpx.TransportError as error:
+                last_error = error
+
+        if last_error is not None:
+            raise last_error
+        raise AudioAcquisitionNetworkError(
+            "audio acquisition target has no usable address"
+        )
+
+    def close(self) -> None:
+        self._inner.close()
 
 
 class _IteratorReader:
     """Minimal binary reader around an HTTP response byte iterator."""
 
-    def __init__(self, chunks: Iterable[bytes]) -> None:
+    def __init__(
+        self,
+        chunks: Iterable[bytes],
+        *,
+        deadline: float,
+        clock: Clock,
+    ) -> None:
         self._chunks: Iterator[bytes] = iter(chunks)
         self._buffer = bytearray()
         self._finished = False
+        self._deadline = deadline
+        self._clock = clock
+
+    def _check_deadline(self) -> None:
+        if self._clock() > self._deadline:
+            raise AudioAcquisitionBoundsError(
+                "audio acquisition transfer deadline exceeded"
+            )
 
     def _pull(self) -> None:
         if self._finished:
             return
+        self._check_deadline()
         try:
             chunk = next(self._chunks)
         except StopIteration:
             self._finished = True
             return
+        self._check_deadline()
         if not isinstance(chunk, bytes):
             chunk = bytes(chunk)
         self._buffer.extend(chunk)
@@ -225,17 +310,23 @@ class AuthorizedAudioAcquirer:
         resolver: Resolver = _default_resolver,
         max_bytes: int,
         max_redirects: int,
+        max_seconds: float = 300.0,
+        clock: Clock = monotonic,
     ) -> None:
         if max_bytes < 1:
             raise ValueError("max_bytes must be positive")
         if max_redirects < 0 or max_redirects > 10:
             raise ValueError("max_redirects must be between 0 and 10")
+        if max_seconds <= 0 or max_seconds > 86_400:
+            raise ValueError("max_seconds must be between 0 and 86400")
         self._registry = registry
         self._storage = storage
         self._client = client
         self._resolver = resolver
         self._max_bytes = max_bytes
         self._max_redirects = max_redirects
+        self._max_seconds = max_seconds
+        self._clock = clock
 
     def _authorize(
         self,
@@ -244,7 +335,7 @@ class AuthorizedAudioAcquirer:
     ) -> None:
         try:
             descriptor = self._registry.get(candidate.provider_key)
-        except Exception as error:
+        except (ProviderRegistryError, KeyError) as error:
             raise AudioAcquisitionDenied(
                 "provider audio capability is unavailable"
             ) from error
@@ -314,6 +405,8 @@ class AuthorizedAudioAcquirer:
         evidence: tuple[RightsEvidenceInput, ...],
     ) -> Any:
         self._authorize(candidate, evidence)
+        started_at = self._clock()
+        deadline = started_at + self._max_seconds
         response = self._open_response(str(candidate.source_url))
         try:
             if response.status_code < 200 or response.status_code >= 300:
@@ -339,8 +432,16 @@ class AuthorizedAudioAcquirer:
                 raise AudioAcquisitionBoundsError(
                     "audio acquisition content length exceeds configured bounds"
                 )
+            if self._clock() > deadline:
+                raise AudioAcquisitionBoundsError(
+                    "audio acquisition transfer deadline exceeded"
+                )
 
-            reader = _IteratorReader(response.iter_raw())
+            reader = _IteratorReader(
+                response.iter_raw(),
+                deadline=deadline,
+                clock=self._clock,
+            )
             return self._storage.put_stream(
                 AUDIO_QUARANTINE_BUCKET,
                 reader,
