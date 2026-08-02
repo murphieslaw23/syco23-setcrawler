@@ -56,7 +56,12 @@ class StorageStub:
         }
 
     def stat(self, bucket: str, key: str) -> StoredAudioObject:
-        return self.objects[(bucket, key)]
+        try:
+            return self.objects[(bucket, key)]
+        except KeyError as error:
+            missing = RuntimeError("object missing")
+            missing.code = "NoSuchKey"  # type: ignore[attr-defined]
+            raise missing from error
 
     def copy_to(
         self,
