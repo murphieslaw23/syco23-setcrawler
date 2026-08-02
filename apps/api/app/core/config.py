@@ -2,7 +2,7 @@ from functools import lru_cache
 from typing import Literal
 from uuid import UUID
 
-from pydantic import Field, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -34,6 +34,21 @@ class Settings(BaseSettings):
         default=1_048_576,
         ge=1,
         le=1_048_576,
+    )
+    audio_storage_enabled: bool = False
+    minio_endpoint: str = Field(default="minio:9000", min_length=1, max_length=255)
+    minio_access_key: SecretStr = SecretStr("")
+    minio_secret_key: SecretStr = SecretStr("")
+    minio_secure: bool = False
+    audio_max_object_bytes: int = Field(
+        default=4_294_967_296,
+        ge=1,
+        le=5_368_709_120,
+    )
+    audio_multipart_part_size_bytes: int = Field(
+        default=16_777_216,
+        ge=5_242_880,
+        le=5_368_709_120,
     )
     environment: Literal["fixture", "local", "production"] = "local"
     repository_mode: Literal["memory", "postgres"] = "postgres"
@@ -76,6 +91,14 @@ class Settings(BaseSettings):
             not self.supabase_url or not self.supabase_anon_key
         ):
             raise ValueError("Supabase URL and anonymous key are required in production")
+        if self.audio_storage_enabled and (
+            not self.minio_endpoint.strip()
+            or not self.minio_access_key.get_secret_value()
+            or not self.minio_secret_key.get_secret_value()
+        ):
+            raise ValueError(
+                "MinIO endpoint and server-side credentials are required when audio storage is enabled"
+            )
         return self
 
     @property
