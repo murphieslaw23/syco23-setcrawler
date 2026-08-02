@@ -111,6 +111,7 @@ def test_memory_facade_reads_private_ledger_and_aborts_idempotently() -> None:
     assert blocked.details["abort_reason"] == "ledger persistence failed"
     assert blocked.details["abort_source"] == "creator_upload_coordinator"
 
+    session = aborted
     replay = repository.abort_creator_upload(
         SESSION_ID,
         reason="duplicate compensation",
