@@ -14,6 +14,8 @@ from app.services.audio_storage import StoredAudioObject
 
 Clock = Callable[[], datetime]
 _MISSING_CODES = frozenset({"NoSuchKey", "NoSuchObject"})
+_EXPIRY_ACTOR = "system-expiry"
+_EXPIRY_REASON = "quarantine retention expired"
 
 
 class AudioLifecycleExecutionError(RuntimeError):
@@ -86,12 +88,30 @@ class AudioLifecycleExecutor:
         limit: int,
         now: datetime | None = None,
     ) -> int:
+        if limit < 1:
+            return 0
         current = now or self._clock()
+        stale_before = current - self._claim_timeout
         jobs = self._repository.claim_due(
             limit=limit,
             now=current,
-            stale_before=current - self._claim_timeout,
+            stale_before=stale_before,
         )
+        remaining = limit - len(jobs)
+        if remaining > 0:
+            self._repository.enqueue_expired_assets(
+                limit=remaining,
+                actor=_EXPIRY_ACTOR,
+                reason=_EXPIRY_REASON,
+                now=current,
+            )
+            jobs.extend(
+                self._repository.claim_due(
+                    limit=remaining,
+                    now=current,
+                    stale_before=stale_before,
+                )
+            )
         for job in jobs:
             try:
                 self._execute(job)
