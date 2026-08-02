@@ -140,6 +140,17 @@ class CreatorUploadSession(BaseModel):
             raise ValueError("received upload bytes exceed the declared size")
         if self.expires_at <= self.created_at:
             raise ValueError("creator upload expiry must follow creation")
+        if (
+            self.status
+            in {
+                CreatorUploadStatus.initiated,
+                CreatorUploadStatus.uploading,
+                CreatorUploadStatus.awaiting_attestation,
+                CreatorUploadStatus.completed,
+            }
+            and self.updated_at >= self.expires_at
+        ):
+            raise ValueError("creator upload cannot transition after expiry")
         storage_values = (self.staging_object_key, self.storage_upload_id)
         if self.status is CreatorUploadStatus.initiated:
             if any(value is not None for value in storage_values):
