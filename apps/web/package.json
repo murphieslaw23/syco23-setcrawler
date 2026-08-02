@@ -21,7 +21,7 @@
     "@playwright/test": "1.61.1",
     "@vitejs/plugin-vue": "6.0.8",
     "@vue/test-utils": "2.4.6",
-    "happy-dom": "20.0.11",
+    "happy-dom": "^20.11.1",
     "typescript": "^5.9.3",
     "vitest": "4.1.10",
     "vue-tsc": "^3.3.8"
