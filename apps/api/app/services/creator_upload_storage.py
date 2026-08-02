@@ -261,6 +261,17 @@ class MinioCreatorUploadStorage:
             if getattr(error, "code", None) != "NoSuchUpload":
                 raise
 
+    def delete_completed(self, handle: MultipartUploadHandle) -> None:
+        self._validate_handle(handle)
+        try:
+            self._delete_completed_object(handle)
+        except Exception as error:
+            if getattr(error, "code", None) not in {
+                "NoSuchKey",
+                "NoSuchObject",
+            }:
+                raise
+
     @staticmethod
     def expected_part_size(
         handle: MultipartUploadHandle,
