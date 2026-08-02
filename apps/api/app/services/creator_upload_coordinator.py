@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from hashlib import sha256
 from typing import Any
 from uuid import UUID
@@ -7,14 +8,15 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 from app.repositories.creator_upload_multipart import CreatorUploadMultipartConflict
-from app.schemas.creator_upload import CreatorUploadSession
+from app.schemas.creator_upload import (
+    CreatorUploadSession,
+    CreatorUploadStatus,
+)
 from app.schemas.creator_upload_multipart import (
     CreatorUploadManifest,
     CreatorUploadPartRecord,
 )
-from app.services.creator_upload_storage import (
-    MultipartUploadHandle,
-)
+from app.services.creator_upload_storage import MultipartUploadHandle
 
 
 class CreatorUploadCompensationError(RuntimeError):
@@ -42,13 +44,13 @@ class CreatorUploadProgress(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     session_id: UUID
-    status: str
+    status: CreatorUploadStatus
     expected_size_bytes: int
     received_size_bytes: int
     part_size_bytes: int
     expected_part_count: int
     version: int
-    expires_at: Any
+    expires_at: datetime
 
     @classmethod
     def from_records(
@@ -62,7 +64,7 @@ class CreatorUploadProgress(BaseModel):
             )
         return cls(
             session_id=session.id,
-            status=session.status.value,
+            status=session.status,
             expected_size_bytes=session.expected_size_bytes,
             received_size_bytes=session.received_size_bytes,
             part_size_bytes=manifest.part_size_bytes,
