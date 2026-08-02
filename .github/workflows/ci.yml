@@ -87,6 +87,29 @@ jobs:
       - run: PYTHONPATH=. TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/syco23 pytest tests -q
       - run: python -m compileall app
 
+  minio-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build pinned MinIO server image
+        run: >-
+          docker build
+          --file docker/minio.Dockerfile
+          --build-arg MINIO_VERSION=RELEASE.2025-10-15T17-29-55Z
+          --build-arg MINIO_COMMIT=9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a
+          --tag syco23-minio-ci
+          .
+      - name: Verify MinIO release identity
+        run: |
+          version="$(docker run --rm --entrypoint sh syco23-minio-ci -c 'minio --version')"
+          printf '%s\n' "$version"
+          printf '%s\n' "$version" | grep -F "RELEASE.2025-10-15T17-29-55Z"
+          if printf '%s\n' "$version" | grep -F "DEVELOPMENT.GOGET"; then
+            echo "MinIO binary does not contain release metadata" >&2
+            exit 1
+          fi
+
   web:
     runs-on: ubuntu-latest
     timeout-minutes: 15

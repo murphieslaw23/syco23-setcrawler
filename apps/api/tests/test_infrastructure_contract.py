@@ -177,6 +177,8 @@ def test_production_compose_keeps_state_and_secrets_on_the_backend_host() -> Non
     assert set(services) == {
         "api",
         "redis",
+        "minio",
+        "audio-storage-init",
         "worker-provider-api",
         "worker-provider-scrape",
         "worker-process",
@@ -207,7 +209,7 @@ def test_production_compose_keeps_state_and_secrets_on_the_backend_host() -> Non
     ]
     assert "/tmp:size=64m,noexec,nosuid" in services["worker-beat"]["tmpfs"]
     assert sum(" beat " in " ".join(service.get("command", [])) for service in services.values()) == 1
-    assert "audio" not in services
+    assert "worker-audio" not in services
 
     backend_services = [
         "api",
