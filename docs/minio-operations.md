@@ -12,6 +12,17 @@ The fixed private buckets are:
 
 The `audio-storage-init` one-shot container creates missing buckets and removes bucket policies so anonymous access remains disabled. Object keys are opaque server-generated identifiers under `objects/<prefix>/<uuid>`; operators and clients must never derive keys from filenames, set titles, provider IDs, or user input.
 
+## Server image and release pin
+
+The MinIO server image is built locally from the pinned source release `RELEASE.2025-10-15T17-29-55Z` through `docker/minio.Dockerfile`. Compose does not depend on a public prebuilt MinIO server tag. The Dockerfile uses Go 1.24.8, compiles a static server binary, and copies it into a minimal non-root Alpine runtime image.
+
+Treat any MinIO release change as a reviewed dependency upgrade. Update the Dockerfile default, both Compose build arguments, the storage contract test, and this operations document in the same pull request. Build and inspect the image before rollout:
+
+```bash
+docker compose build --pull minio
+docker image inspect syco23-minio:RELEASE.2025-10-15T17-29-55Z
+```
+
 ## Credentials and network boundary
 
 - Generate independent, high-entropy `MINIO_ROOT_USER` and `MINIO_ROOT_PASSWORD` values for each deployment.
@@ -30,12 +41,13 @@ Promotion from quarantine is a server-side copy into a new opaque key. Promotion
 ## Startup and verification
 
 ```bash
+docker compose build minio
 docker compose up -d minio
 docker compose run --rm audio-storage-init
 docker compose ps minio
 ```
 
-Expected initializer output names all three buckets. Verify that the host has no MinIO listener and that Caddy only routes the API. Do not paste credentials, object keys, or private asset metadata into release evidence.
+Expected initializer output names all three buckets. Verify that the MinIO health check reaches `/minio/health/live`, that the host has no MinIO listener, and that Caddy only routes the API. Do not paste credentials, object keys, or private asset metadata into release evidence.
 
 ## Backup, restore, and accepted risk
 
@@ -46,12 +58,12 @@ Before destructive maintenance:
 1. Stop acquisition and processing jobs.
 2. Snapshot or copy the `minio_data` volume at the storage layer.
 3. Export PostgreSQL rows for rights reviews, audio assets, versions, checksums, and decision events.
-4. Record the exact application commit and MinIO image tag.
+4. Record the exact application commit and MinIO source release.
 
 To restore:
 
 1. Restore the PostgreSQL backup and `minio_data` volume from the same recovery point.
-2. Start MinIO without exposing ports.
+2. Rebuild the pinned MinIO image and start it without exposing ports.
 3. Run `audio-storage-init`; it is idempotent and does not delete objects.
 4. Compare database size and SHA-256 checksum records with MinIO object metadata.
 5. Keep acquisition disabled until integrity sampling and rights-state reconciliation succeed.
