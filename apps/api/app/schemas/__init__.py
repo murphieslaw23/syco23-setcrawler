@@ -1,5 +1,11 @@
 from app.schemas.candidate import Candidate, CandidateCreate
 from app.schemas.auth import UserRole
+from app.schemas.creator_upload import (
+    CreatorUploadAttestation,
+    CreatorUploadSession,
+    CreatorUploadStart,
+    CreatorUploadStatus,
+)
 from app.schemas.image import SetImage
 from app.schemas.import_job import (
     ImportJob,
@@ -45,6 +51,10 @@ from app.schemas.set import (
 __all__ = [
     "Candidate",
     "CandidateCreate",
+    "CreatorUploadAttestation",
+    "CreatorUploadSession",
+    "CreatorUploadStart",
+    "CreatorUploadStatus",
     "ImportJob",
     "ImportJobPage",
     "ImportJobPatch",
