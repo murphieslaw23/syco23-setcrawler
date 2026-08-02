@@ -188,12 +188,21 @@ class MinioCreatorUploadStorage:
             if not part.etag:
                 raise MultipartUploadConflict("multipart part ETag is missing")
 
-        result = self._client._complete_multipart_upload(
-            handle.bucket,
-            handle.key,
-            handle.upload_id,
-            [Part(part.part_number, part.etag) for part in ordered],
-        )
+        result: Any | None = None
+        try:
+            result = self._client._complete_multipart_upload(
+                handle.bucket,
+                handle.key,
+                handle.upload_id,
+                [Part(part.part_number, part.etag) for part in ordered],
+            )
+        except Exception as error:
+            if getattr(error, "code", None) != "NoSuchUpload":
+                raise
+            # A previous attempt may have committed the remote multipart object
+            # before the database transaction failed. Verify the private object
+            # below instead of forcing a complete re-upload.
+
         try:
             stat = self._client.stat_object(handle.bucket, handle.key)
             actual_size = int(stat.size)
@@ -227,11 +236,14 @@ class MinioCreatorUploadStorage:
             key=handle.key,
             size=actual_size,
             sha256=actual_sha256,
-            etag=getattr(result, "etag", None) or getattr(stat, "etag", None),
+            etag=(
+                getattr(result, "etag", None) if result is not None else None
+            ) or getattr(stat, "etag", None),
             version_id=(
                 getattr(result, "version_id", None)
-                or getattr(stat, "version_id", None)
-            ),
+                if result is not None
+                else None
+            ) or getattr(stat, "version_id", None),
             content_type=actual_content_type,
             last_modified=getattr(stat, "last_modified", None),
             metadata=metadata,
@@ -247,6 +259,17 @@ class MinioCreatorUploadStorage:
             )
         except Exception as error:
             if getattr(error, "code", None) != "NoSuchUpload":
+                raise
+
+    def delete_completed(self, handle: MultipartUploadHandle) -> None:
+        self._validate_handle(handle)
+        try:
+            self._delete_completed_object(handle)
+        except Exception as error:
+            if getattr(error, "code", None) not in {
+                "NoSuchKey",
+                "NoSuchObject",
+            }:
                 raise
 
     @staticmethod
