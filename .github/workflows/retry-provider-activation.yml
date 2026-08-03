@@ -1,0 +1,112 @@
+name: Retry production provider activation
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/retry-provider-activation.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: retry-production-provider-activation
+  cancel-in-progress: false
+
+jobs:
+  activate:
+    name: Probe and activate providers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out verified main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Probe public DNS and endpoint
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -u
+          getent ahosts api.syco23.org || true
+          curl --fail --silent --show-error --max-time 10 \
+            https://api.syco23.org/health || true
+
+      - name: Prepare SSH credentials
+        id: ssh
+        shell: bash
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          IONOS_HOST: ${{ secrets.IONOS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          IONOS_USER: ${{ secrets.IONOS_USER }}
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          host="${VPS_HOST:-${IONOS_HOST:-87.106.219.4}}"
+          user="${VPS_USER:-${IONOS_USER:-root}}"
+          key="${VPS_SSH_PRIVATE_KEY:-${VPS_SSH_KEY:-${DEPLOY_SSH_KEY:-}}}"
+
+          if [[ -z "$key" ]]; then
+            echo "No SSH private key is configured in VPS_SSH_PRIVATE_KEY, VPS_SSH_KEY, or DEPLOY_SSH_KEY." >&2
+            exit 1
+          fi
+
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$key" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          ssh-keygen -y -f "$HOME/.ssh/id_ed25519" >/dev/null
+
+          timeout 12 bash -c "</dev/tcp/${host}/22"
+          ssh-keyscan -T 10 -H "$host" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+          echo "host=$host" >> "$GITHUB_OUTPUT"
+          echo "user=$user" >> "$GITHUB_OUTPUT"
+
+      - name: Update and activate production providers
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ steps.ssh.outputs.host }}
+          DEPLOY_USER: ${{ steps.ssh.outputs.user }}
+        run: |
+          set -Eeuo pipefail
+          ssh \
+            -o BatchMode=yes \
+            -o ConnectTimeout=12 \
+            -o ServerAliveInterval=10 \
+            -o ServerAliveCountMax=3 \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" 'bash -se' <<'REMOTE'
+          set -Eeuo pipefail
+          cd /opt/syco23-setcrawler
+          test -f .env.production
+          test -z "$(git status --porcelain --untracked-files=no)"
+          git checkout main
+          git pull --ff-only origin main
+          test "$(git rev-parse HEAD)" = "458902bb57487f944bacf200d7cdff78e8bbe8f3"
+          PROVIDER_ACTIVATION_ACK=activate-all \
+            bash ./scripts/deploy-production.sh api.syco23.org
+          REMOTE
+
+      - name: Verify production endpoint through VPS address
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ steps.ssh.outputs.host }}
+        run: |
+          set -Eeuo pipefail
+          health="$(curl \
+            --fail \
+            --silent \
+            --show-error \
+            --max-time 20 \
+            --resolve "api.syco23.org:443:${DEPLOY_HOST}" \
+            https://api.syco23.org/health)"
+          [[ "$health" == *'"status":"ok"'* ]]
+          [[ "$health" == *'"service":"syco23-setcrawler-api"'* ]]
+          printf '%s\n' "$health"
