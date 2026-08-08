@@ -1,10 +1,13 @@
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / ".github/workflows/audio-lifecycle-proof.yml"
 PROOF_SCRIPT = ROOT / "scripts/verify-audio-lifecycle-production.sh"
 PROOF_CLI = ROOT / "apps/api/app/cli/prove_audio_lifecycle.py"
+PROOF_COMPOSE = ROOT / "docker-compose.audio-lifecycle-proof.yml"
 
 
 def test_audio_lifecycle_proof_is_manual_protected_and_exact_commit() -> None:
@@ -37,16 +40,29 @@ def test_audio_lifecycle_proof_script_fails_closed_and_leaves_profile_disabled()
         '[[ "$(git rev-parse HEAD)" == "$EXPECTED_COMMIT" ]]',
         "docker-compose.production.yml",
         "docker-compose.audio-lifecycle.production.yml",
+        "docker-compose.audio-lifecycle-proof.yml",
         "audio-storage-init",
         "worker-audio-lifecycle",
         "python -m app.cli.prove_audio_lifecycle",
         "docker compose",
         "stop worker-audio-lifecycle",
+        "down -v --remove-orphans",
     ):
         assert expected in script
 
     assert "worker-beat" not in script
     assert "--profile audio-lifecycle up -d worker-beat" not in script
+
+
+def test_audio_lifecycle_proof_network_is_ephemeral_and_unpublished() -> None:
+    compose = yaml.safe_load(PROOF_COMPOSE.read_text())
+    services = compose["services"]
+
+    assert services["db"]["ports"] == []
+    assert services["redis"]["ports"] == []
+    assert services["minio"]["ports"] == []
+    assert services["api"]["ports"] == []
+    assert "web" not in services
 
 
 def test_audio_lifecycle_proof_cli_is_synthetic_private_and_self_cleaning() -> None:
