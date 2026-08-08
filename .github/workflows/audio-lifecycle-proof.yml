@@ -1,0 +1,95 @@
+name: audio-lifecycle-proof
+
+on:
+  workflow_dispatch:
+    inputs:
+      acknowledgement:
+        description: "Type prove-v0.6 to run the isolated production-host lifecycle proof"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audio-lifecycle-production-proof
+  cancel-in-progress: false
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment: audio-lifecycle-production
+    env:
+      EXPECTED_COMMIT: ${{ github.sha }}
+      REQUEST_ACK: ${{ inputs.acknowledgement }}
+      AUDIO_LIFECYCLE_PROOF_ACK: prove-v0.6
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+      VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Validate protected proof request
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/main" ]]
+          [[ "$REQUEST_ACK" == "$AUDIO_LIFECYCLE_PROOF_ACK" ]]
+          [[ -n "$VPS_HOST" ]]
+          [[ -n "$VPS_USER" ]]
+          [[ -n "$VPS_SSH_PRIVATE_KEY" ]]
+          [[ -n "$VPS_KNOWN_HOSTS" ]]
+          [[ "$(git rev-parse HEAD)" == "$EXPECTED_COMMIT" ]]
+
+      - name: Install pinned SSH identity and known hosts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" > "$HOME/.ssh/audio_lifecycle_proof"
+          chmod 600 "$HOME/.ssh/audio_lifecycle_proof"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+          ssh-keygen -F "$VPS_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null
+
+      - name: Run exact-commit isolated proof on production host
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          remote="$VPS_USER@$VPS_HOST"
+          ssh \
+            -i "$HOME/.ssh/audio_lifecycle_proof" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            "$remote" \
+            "cd /opt/syco23-setcrawler && \
+             test -z \"\$(git status --porcelain --untracked-files=no)\" && \
+             git fetch --quiet origin main && \
+             git checkout --quiet main && \
+             git pull --ff-only --quiet origin main && \
+             test \"\$(git rev-parse HEAD)\" = '$EXPECTED_COMMIT' && \
+             EXPECTED_COMMIT='$EXPECTED_COMMIT' \
+             AUDIO_LIFECYCLE_PROOF_ACK='$AUDIO_LIFECYCLE_PROOF_ACK' \
+             SETCRAWLER_REPO_DIR=/opt/syco23-setcrawler \
+             bash scripts/verify-audio-lifecycle-production.sh"
+
+      - name: Record sanitized evidence
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo '### v0.6 private audio lifecycle proof'
+            echo "- commit: \`$EXPECTED_COMMIT\`"
+            echo "- workflow run: \`$GITHUB_RUN_ID\`"
+            echo '- topology: isolated production-host Docker network and volumes'
+            echo '- MinIO: no host-published port'
+            echo '- path: rights approval → durable lifecycle job → Celery worker → private originals promotion'
+            echo '- cleanup: lifecycle worker stopped; isolated containers and volumes removed'
+          } >> "$GITHUB_STEP_SUMMARY"
