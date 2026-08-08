@@ -92,6 +92,7 @@ services:
       - ./supabase/migrations/20260802120000_creator_upload_sessions.sql:/docker-entrypoint-initdb.d/20260802120000-creator-upload-sessions.sql:ro
       - ./supabase/migrations/20260802150000_creator_upload_part_ledger.sql:/docker-entrypoint-initdb.d/20260802150000-creator-upload-part-ledger.sql:ro
       - ./supabase/migrations/20260802170000_audio_lifecycle_ledger.sql:/docker-entrypoint-initdb.d/20260802170000-audio-lifecycle-ledger.sql:ro
+      - ./supabase/migrations/20260808010000_rights_lifecycle_handoff.sql:/docker-entrypoint-initdb.d/20260808010000-rights-lifecycle-handoff.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d syco23"]
       interval: 5s
