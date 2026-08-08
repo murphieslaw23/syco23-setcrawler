@@ -58,10 +58,16 @@ def test_audio_lifecycle_proof_network_is_ephemeral_and_unpublished() -> None:
     compose = yaml.safe_load(PROOF_COMPOSE.read_text())
     services = compose["services"]
 
-    assert services["db"]["ports"] == []
-    assert services["redis"]["ports"] == []
-    assert services["minio"]["ports"] == []
-    assert services["api"]["ports"] == []
+    assert set(services) == {
+        "db",
+        "redis",
+        "minio",
+        "audio-storage-init",
+        "worker-audio-lifecycle",
+    }
+    for service_name in ("db", "redis", "minio"):
+        assert services[service_name]["ports"] == []
+    assert "api" not in services
     assert "web" not in services
 
 
