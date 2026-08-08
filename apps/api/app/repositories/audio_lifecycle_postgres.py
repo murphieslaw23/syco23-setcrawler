@@ -262,43 +262,66 @@ class PostgresAudioLifecycleRepository:
                             stale,
                         ),
                     )
-                rows = cursor.execute(
+                    claim_sql = """
+                        with due as (
+                          select id
+                          from audio_asset_lifecycle_jobs
+                          where (
+                            status = 'queued'
+                            or (status = 'retry' and next_retry_at <= %s)
+                            or (status = 'claimed' and claim_started_at <= %s)
+                          )
+                            and attempt_count < %s
+                          order by coalesce(next_retry_at, created_at), id
+                          for update skip locked
+                          limit %s
+                        )
+                        update audio_asset_lifecycle_jobs as jobs
+                        set status = 'claimed',
+                            claim_token = gen_random_uuid(),
+                            claim_started_at = %s,
+                            attempt_count = jobs.attempt_count + 1,
+                            next_retry_at = null,
+                            last_error = null,
+                            updated_at = %s
+                        from due
+                        where jobs.id = due.id
+                        returning jobs.*
                     """
-                    with due as (
-                      select id
-                      from audio_asset_lifecycle_jobs
-                      where (
-                        status = 'queued'
-                        or (status = 'retry' and next_retry_at <= %s)
-                        or (status = 'claimed' and claim_started_at <= %s)
-                      )
-                        and (%s is null or attempt_count < %s)
-                      order by coalesce(next_retry_at, created_at), id
-                      for update skip locked
-                      limit %s
-                    )
-                    update audio_asset_lifecycle_jobs as jobs
-                    set status = 'claimed',
-                        claim_token = gen_random_uuid(),
-                        claim_started_at = %s,
-                        attempt_count = jobs.attempt_count + 1,
-                        next_retry_at = null,
-                        last_error = null,
-                        updated_at = %s
-                    from due
-                    where jobs.id = due.id
-                    returning jobs.*
-                    """,
-                    (
+                    claim_params = (
                         current,
                         stale,
-                        max_attempts,
                         max_attempts,
                         limit,
                         current,
                         current,
-                    ),
-                ).fetchall()
+                    )
+                else:
+                    claim_sql = """
+                        with due as (
+                          select id
+                          from audio_asset_lifecycle_jobs
+                          where status = 'queued'
+                             or (status = 'retry' and next_retry_at <= %s)
+                             or (status = 'claimed' and claim_started_at <= %s)
+                          order by coalesce(next_retry_at, created_at), id
+                          for update skip locked
+                          limit %s
+                        )
+                        update audio_asset_lifecycle_jobs as jobs
+                        set status = 'claimed',
+                            claim_token = gen_random_uuid(),
+                            claim_started_at = %s,
+                            attempt_count = jobs.attempt_count + 1,
+                            next_retry_at = null,
+                            last_error = null,
+                            updated_at = %s
+                        from due
+                        where jobs.id = due.id
+                        returning jobs.*
+                    """
+                    claim_params = (current, stale, limit, current, current)
+                rows = cursor.execute(claim_sql, claim_params).fetchall()
         return [_job(row) for row in rows]
 
     def complete_lifecycle(
