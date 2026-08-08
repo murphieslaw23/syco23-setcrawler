@@ -23,6 +23,7 @@ _ACTIVE_STATUSES = frozenset(
         AudioLifecycleJobStatus.retry,
     }
 )
+_STALE_EXHAUSTED_ERROR = "stale claim exhausted retry budget"
 
 
 class AudioLifecycleError(RuntimeError):
@@ -199,9 +200,12 @@ class InMemoryAudioLifecycleRepository:
         limit: int,
         now: datetime | None = None,
         stale_before: datetime | None = None,
+        max_attempts: int | None = None,
     ) -> list[AudioLifecycleJob]:
         if limit < 1:
             return []
+        if max_attempts is not None and max_attempts < 1:
+            raise ValueError("max_attempts must be positive")
         current = now or self._clock()
         with self._lock:
             candidates = sorted(
@@ -210,18 +214,37 @@ class InMemoryAudioLifecycleRepository:
             )
             claimed: list[AudioLifecycleJob] = []
             for job in candidates:
-                due = job.status is AudioLifecycleJobStatus.queued
-                due = due or (
+                retry_due = (
                     job.status is AudioLifecycleJobStatus.retry
                     and job.next_retry_at is not None
                     and job.next_retry_at <= current
                 )
-                due = due or (
+                stale_claim = (
                     job.status is AudioLifecycleJobStatus.claimed
                     and stale_before is not None
                     and job.claim_started_at is not None
                     and job.claim_started_at <= stale_before
                 )
+                if (
+                    max_attempts is not None
+                    and job.attempt_count >= max_attempts
+                    and (retry_due or stale_claim)
+                ):
+                    terminal = AudioLifecycleJob.model_validate(
+                        {
+                            **job.model_dump(),
+                            "status": AudioLifecycleJobStatus.failed,
+                            "claim_token": None,
+                            "claim_started_at": None,
+                            "next_retry_at": None,
+                            "last_error": _STALE_EXHAUSTED_ERROR,
+                            "updated_at": current,
+                        }
+                    )
+                    self.jobs[job.id] = terminal
+                    continue
+                due = job.status is AudioLifecycleJobStatus.queued
+                due = due or retry_due or stale_claim
                 if not due:
                     continue
                 updated = AudioLifecycleJob.model_validate(
