@@ -110,6 +110,19 @@ jobs:
             exit 1
           fi
 
+  audio-processing-image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build media worker image
+        run: docker build -f docker/worker.Dockerfile -t syco23-worker-audio-ci .
+      - name: Verify FFmpeg runtime and MP3 encoder
+        run: |
+          docker run --rm --entrypoint sh syco23-worker-audio-ci -c "ffmpeg -version"
+          docker run --rm --entrypoint sh syco23-worker-audio-ci -c "ffprobe -version"
+          docker run --rm --entrypoint sh syco23-worker-audio-ci -c "ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libmp3lame"
+
   web:
     runs-on: ubuntu-latest
     timeout-minutes: 15
