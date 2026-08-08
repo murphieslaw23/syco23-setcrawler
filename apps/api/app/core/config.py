@@ -50,6 +50,24 @@ class Settings(BaseSettings):
         ge=5_242_880,
         le=5_368_709_120,
     )
+    audio_lifecycle_executor_enabled: bool = False
+    audio_lifecycle_interval_seconds: int = Field(
+        default=60,
+        ge=15,
+        le=3_600,
+    )
+    audio_lifecycle_batch_size: int = Field(default=25, ge=1, le=500)
+    audio_lifecycle_max_attempts: int = Field(default=5, ge=1, le=20)
+    audio_lifecycle_retry_delay_seconds: int = Field(
+        default=300,
+        ge=5,
+        le=86_400,
+    )
+    audio_lifecycle_claim_timeout_seconds: int = Field(
+        default=900,
+        ge=30,
+        le=86_400,
+    )
     environment: Literal["fixture", "local", "production"] = "local"
     repository_mode: Literal["memory", "postgres"] = "postgres"
     auth_mode: Literal["local", "supabase"] = "local"
@@ -78,6 +96,13 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_auth(self) -> "Settings":
+        if self.audio_lifecycle_executor_enabled and (
+            self.repository_mode != "postgres"
+            or not self.audio_storage_enabled
+        ):
+            raise ValueError(
+                "audio lifecycle executor requires PostgreSQL and private audio storage"
+            )
         if (
             self.repository_mode == "memory"
             and self.environment != "fixture"

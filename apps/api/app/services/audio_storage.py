@@ -131,7 +131,9 @@ class MinioAudioStorage:
 
     def _validate_length(self, length: int) -> None:
         if length < 1 or length > self._max_object_bytes:
-            raise AudioStorageBoundsError("audio object length is outside configured bounds")
+            raise AudioStorageBoundsError(
+                "audio object length is outside configured bounds"
+            )
 
     def put_stream(
         self,
@@ -169,7 +171,9 @@ class MinioAudioStorage:
         overflow = stream.read(1)
         if incomplete or overflow:
             self._client.remove_object(bucket, key)
-            raise AudioStorageBoundsError("audio stream length does not match declared length")
+            raise AudioStorageBoundsError(
+                "audio stream length does not match declared length"
+            )
         if expected_sha256 is not None and actual_sha256 != expected_sha256:
             self._client.remove_object(bucket, key)
             raise AudioChecksumMismatch("audio object checksum does not match")
@@ -237,10 +241,24 @@ class MinioAudioStorage:
         source_key: str,
         destination_bucket: str,
     ) -> StoredAudioObject:
+        return self.copy_to(
+            source_bucket,
+            source_key,
+            destination_bucket,
+            self.new_object_key(),
+        )
+
+    def copy_to(
+        self,
+        source_bucket: str,
+        source_key: str,
+        destination_bucket: str,
+        destination_key: str,
+    ) -> StoredAudioObject:
         self._validate_bucket(source_bucket)
         self._validate_key(source_key)
         self._validate_bucket(destination_bucket)
-        destination_key = self.new_object_key()
+        self._validate_key(destination_key)
         self._client.copy_object(
             destination_bucket,
             destination_key,
