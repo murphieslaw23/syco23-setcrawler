@@ -38,6 +38,11 @@ def _require_isolated_proof_environment() -> None:
         raise RuntimeError("AUDIO_LIFECYCLE_PROOF_ACK is invalid")
     if os.getenv("AUDIO_LIFECYCLE_PROOF_ISOLATED", "").casefold() != "true":
         raise RuntimeError("isolated lifecycle proof marker is missing")
+    if (
+        AUDIO_QUARANTINE_BUCKET != "audio-quarantine"
+        or AUDIO_ORIGINALS_BUCKET != "audio-originals"
+    ):
+        raise RuntimeError("canonical private audio bucket identities changed")
 
     settings = get_settings()
     database_host = urlsplit(settings.database_url).hostname
