@@ -32,6 +32,9 @@ class AudioAssetState(StrEnum):
     approved = "approved"
     rejected = "rejected"
     expired = "expired"
+    processing = "processing"
+    ready = "ready"
+    failed = "failed"
 
 
 class AudioBucket(StrEnum):
@@ -109,9 +112,19 @@ class AudioAssetRecord(BaseModel):
 
     @model_validator(mode="after")
     def validate_bucket_state(self) -> "AudioAssetRecord":
-        if self.state is AudioAssetState.approved:
+        original_states = {
+            AudioAssetState.approved,
+            AudioAssetState.processing,
+            AudioAssetState.ready,
+            AudioAssetState.failed,
+        }
+        if self.state in original_states:
             if self.bucket_name is not AudioBucket.originals:
-                raise ValueError("approved audio assets must be stored in originals")
+                raise ValueError(
+                    "approved or processed audio assets must remain in originals"
+                )
+            if self.expires_at is not None:
+                raise ValueError("original audio assets cannot retain quarantine expiry")
         elif self.bucket_name is not AudioBucket.quarantine:
             raise ValueError("unapproved audio assets must remain in quarantine")
         if self.state is AudioAssetState.quarantine and self.expires_at is None:
