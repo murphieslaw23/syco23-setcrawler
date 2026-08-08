@@ -113,6 +113,7 @@ services:
       AUDIO_MULTIPART_PART_SIZE_BYTES: "5242880"
       SERVICE_COMPONENT: worker-audio-lifecycle-proof
       AUDIO_LIFECYCLE_PROOF_ACK: "${AUDIO_LIFECYCLE_PROOF_ACK:?AUDIO_LIFECYCLE_PROOF_ACK is required}"
+      AUDIO_LIFECYCLE_PROOF_ISOLATED: "true"
     read_only: true
     tmpfs:
       - /tmp:size=64m,noexec,nosuid
