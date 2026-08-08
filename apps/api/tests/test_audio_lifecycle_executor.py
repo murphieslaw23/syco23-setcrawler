@@ -83,6 +83,14 @@ class StorageStub:
         self.objects.pop((bucket, key), None)
 
 
+class MutableClock:
+    def __init__(self, now: datetime) -> None:
+        self.now = now
+
+    def __call__(self) -> datetime:
+        return self.now
+
+
 def quarantine_asset(*, expires_at: datetime | None = None) -> AudioAssetRecord:
     return AudioAssetRecord(
         id=ASSET_ID,
@@ -207,6 +215,87 @@ def test_transient_storage_failure_retries_with_a_fresh_claim() -> None:
     assert completed is not None
     assert completed.status is AudioLifecycleJobStatus.completed
     assert completed.attempt_count == 2
+
+
+def test_retry_deadline_is_measured_from_the_individual_failure_time() -> None:
+    asset = quarantine_asset()
+    clock = MutableClock(NOW)
+    audio_repository = AudioRepositoryStub(asset)
+    repository = InMemoryAudioLifecycleRepository(
+        audio_repository,
+        clock=clock,
+    )
+
+    class SlowFailingStorage(StorageStub):
+        def copy_to(
+            self,
+            source_bucket: str,
+            source_key: str,
+            destination_bucket: str,
+            destination_key: str,
+        ) -> StoredAudioObject:
+            self.copy_calls += 1
+            clock.now = NOW + timedelta(minutes=4)
+            raise RuntimeError("slow copy failed")
+
+    storage = SlowFailingStorage(asset)
+    executor = AudioLifecycleExecutor(
+        repository,
+        storage,
+        clock=clock,
+        max_attempts=3,
+        retry_delay=timedelta(minutes=5),
+    )
+    job = repository.enqueue_lifecycle(
+        ASSET_ID,
+        action=AudioLifecycleAction.approve,
+        actor="admin@example.org",
+        reason="rights review approved",
+    )
+
+    assert executor.run_once(limit=1) == 1
+
+    retry = repository.get_lifecycle_job(job.id)
+    assert retry is not None
+    assert retry.status is AudioLifecycleJobStatus.retry
+    assert retry.next_retry_at == NOW + timedelta(minutes=9)
+
+
+def test_stale_claims_stop_at_the_configured_attempt_budget() -> None:
+    executor, repository, storage = build_executor(quarantine_asset())
+    job = repository.enqueue_lifecycle(
+        ASSET_ID,
+        action=AudioLifecycleAction.approve,
+        actor="admin@example.org",
+        reason="rights review approved",
+    )
+
+    first = repository.claim_due(limit=1, now=NOW)
+    assert first[0].attempt_count == 1
+    second = repository.claim_due(
+        limit=1,
+        now=NOW + timedelta(minutes=20),
+        stale_before=NOW + timedelta(minutes=5),
+    )
+    assert second[0].attempt_count == 2
+    third = repository.claim_due(
+        limit=1,
+        now=NOW + timedelta(minutes=40),
+        stale_before=NOW + timedelta(minutes=25),
+    )
+    assert third[0].attempt_count == 3
+
+    assert executor.run_once(limit=1, now=NOW + timedelta(minutes=60)) == 0
+
+    exhausted = repository.get_lifecycle_job(job.id)
+    assert exhausted is not None
+    assert exhausted.status is AudioLifecycleJobStatus.failed
+    assert exhausted.attempt_count == 3
+    assert exhausted.claim_token is None
+    assert exhausted.claim_started_at is None
+    assert exhausted.next_retry_at is None
+    assert exhausted.last_error == "stale claim exhausted retry budget"
+    assert storage.copy_calls == 0
 
 
 def test_expiry_cannot_be_enqueued_before_the_asset_deadline() -> None:
