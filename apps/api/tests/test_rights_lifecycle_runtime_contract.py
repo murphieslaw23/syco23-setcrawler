@@ -15,7 +15,7 @@ def test_rights_lifecycle_handoff_is_a_database_transaction_invariant() -> None:
     assert "create or replace function public.enqueue_rights_lifecycle_handoff" in migration
     assert "after update of status on public.rights_reviews" in migration
     assert "insert into public.audio_asset_lifecycle_jobs" in migration
-    assert "new.status in ('approved', 'rejected')" in migration
+    assert "new.status not in ('approved', 'rejected')" in migration
     assert "old.status is distinct from new.status" in migration
     assert "audio-quarantine" in migration
     assert "minio" not in migration
