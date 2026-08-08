@@ -97,6 +97,7 @@ class AudioLifecycleExecutor:
             limit=limit,
             now=current,
             stale_before=stale_before,
+            max_attempts=self._max_attempts,
         )
         remaining = limit - len(jobs)
         if remaining > 0:
@@ -111,6 +112,7 @@ class AudioLifecycleExecutor:
                     limit=remaining,
                     now=current,
                     stale_before=stale_before,
+                    max_attempts=self._max_attempts,
                 )
             )
         for job in jobs:
@@ -127,11 +129,14 @@ class AudioLifecycleExecutor:
                     raise AudioLifecycleExecutionError(
                         "claimed lifecycle job has no claim token"
                     ) from error
+                failure_time = self._clock()
+                if failure_time < current:
+                    failure_time = current
                 self._repository.record_failure(
                     job.id,
                     claim_token=job.claim_token,
                     error=f"{type(error).__name__}: {error}",
-                    retry_at=current + self._retry_delay,
+                    retry_at=failure_time + self._retry_delay,
                     max_attempts=self._max_attempts,
                 )
         return len(jobs)
