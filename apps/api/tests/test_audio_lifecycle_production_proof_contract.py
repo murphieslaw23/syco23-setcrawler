@@ -18,6 +18,8 @@ def test_audio_lifecycle_proof_is_manual_protected_and_exact_commit() -> None:
         "environment: audio-lifecycle-production",
         "contents: read",
         "EXPECTED_COMMIT: ${{ github.sha }}",
+        "REQUEST_ACK: ${{ inputs.acknowledgement }}",
+        '[[ "$REQUEST_ACK" == "$AUDIO_LIFECYCLE_PROOF_ACK" ]]',
         "VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}",
         "VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}",
         "AUDIO_LIFECYCLE_PROOF_ACK: prove-v0.6",
@@ -25,6 +27,7 @@ def test_audio_lifecycle_proof_is_manual_protected_and_exact_commit() -> None:
     ):
         assert expected in workflow
 
+    assert '[[ "${{ inputs.acknowledgement }}"' not in workflow
     assert "pull_request:" not in workflow
     assert "push:" not in workflow
     assert "ssh-keyscan" not in workflow
