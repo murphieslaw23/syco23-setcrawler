@@ -22,6 +22,7 @@ jobs:
     environment: audio-lifecycle-production
     env:
       EXPECTED_COMMIT: ${{ github.sha }}
+      REQUEST_ACK: ${{ inputs.acknowledgement }}
       AUDIO_LIFECYCLE_PROOF_ACK: prove-v0.6
       VPS_HOST: ${{ secrets.VPS_HOST }}
       VPS_USER: ${{ secrets.VPS_USER }}
@@ -38,7 +39,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           [[ "$GITHUB_REF" == "refs/heads/main" ]]
-          [[ "${{ inputs.acknowledgement }}" == "$AUDIO_LIFECYCLE_PROOF_ACK" ]]
+          [[ "$REQUEST_ACK" == "$AUDIO_LIFECYCLE_PROOF_ACK" ]]
           [[ -n "$VPS_HOST" ]]
           [[ -n "$VPS_USER" ]]
           [[ -n "$VPS_SSH_PRIVATE_KEY" ]]
