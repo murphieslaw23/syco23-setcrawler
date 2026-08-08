@@ -19,6 +19,8 @@ from app.schemas.audio_lifecycle import (
 
 
 Clock = Callable[[], datetime]
+_STALE_EXHAUSTED_ERROR = "stale claim exhausted retry budget"
+_RETRY_EXHAUSTED_ERROR = "retry budget exhausted"
 
 
 def _utc_now() -> datetime:
@@ -219,21 +221,58 @@ class PostgresAudioLifecycleRepository:
         limit: int,
         now: datetime | None = None,
         stale_before: datetime | None = None,
+        max_attempts: int | None = None,
     ) -> list[AudioLifecycleJob]:
         if limit < 1:
             return []
+        if max_attempts is not None and max_attempts < 1:
+            raise ValueError("max_attempts must be positive")
         current = now or self._clock()
         stale = stale_before or current
         with self._pool.connection() as connection:
             with connection.cursor() as cursor:
+                if max_attempts is not None:
+                    cursor.execute(
+                        """
+                        update audio_asset_lifecycle_jobs
+                        set status = 'failed',
+                            claim_token = null,
+                            claim_started_at = null,
+                            next_retry_at = null,
+                            last_error = case
+                              when status = 'claimed' then %s
+                              else %s
+                            end,
+                            updated_at = %s
+                        where attempt_count >= %s
+                          and (
+                            (status = 'retry' and next_retry_at <= %s)
+                            or (
+                              status = 'claimed'
+                              and claim_started_at <= %s
+                            )
+                          )
+                        """,
+                        (
+                            _STALE_EXHAUSTED_ERROR,
+                            _RETRY_EXHAUSTED_ERROR,
+                            current,
+                            max_attempts,
+                            current,
+                            stale,
+                        ),
+                    )
                 rows = cursor.execute(
                     """
                     with due as (
                       select id
                       from audio_asset_lifecycle_jobs
-                      where status = 'queued'
-                         or (status = 'retry' and next_retry_at <= %s)
-                         or (status = 'claimed' and claim_started_at <= %s)
+                      where (
+                        status = 'queued'
+                        or (status = 'retry' and next_retry_at <= %s)
+                        or (status = 'claimed' and claim_started_at <= %s)
+                      )
+                        and (%s is null or attempt_count < %s)
                       order by coalesce(next_retry_at, created_at), id
                       for update skip locked
                       limit %s
@@ -250,7 +289,15 @@ class PostgresAudioLifecycleRepository:
                     where jobs.id = due.id
                     returning jobs.*
                     """,
-                    (current, stale, limit, current, current),
+                    (
+                        current,
+                        stale,
+                        max_attempts,
+                        max_attempts,
+                        limit,
+                        current,
+                        current,
+                    ),
                 ).fetchall()
         return [_job(row) for row in rows]
 
