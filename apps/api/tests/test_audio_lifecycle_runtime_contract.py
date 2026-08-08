@@ -43,6 +43,17 @@ def test_lifecycle_worker_is_isolated_and_opt_in_locally() -> None:
     ]
 
 
+def test_local_database_bootstraps_lifecycle_ledger_before_worker_can_run() -> None:
+    base = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
+    volumes = base["services"]["db"]["volumes"]
+
+    assert (
+        "./supabase/migrations/20260802170000_audio_lifecycle_ledger.sql:"
+        "/docker-entrypoint-initdb.d/20260802170000-audio-lifecycle-ledger.sql:ro"
+        in volumes
+    )
+
+
 def test_production_lifecycle_overlay_requires_private_credentials() -> None:
     overlay = yaml.safe_load(
         (ROOT / "docker-compose.audio-lifecycle.production.yml").read_text()
